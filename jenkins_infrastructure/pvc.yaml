@@ -1,0 +1,15 @@
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: jenkins-pvc-new
+  namespace: jenkins
+spec:
+  accessModes:
+  - ReadWriteOnce
+  resources:
+    requests:
+      storage: 5Gi  # Match the PV capacity
+  storageClassName: standard
+  volumeMode: Filesystem
+  volumeName: jenkins-pv-new
+

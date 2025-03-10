@@ -1,0 +1,14 @@
+apiVersion: v1
+kind: PersistentVolume
+metadata:
+  name: jenkins-pv-new
+spec:
+  capacity:
+    storage: 10Gi
+  accessModes:
+    - ReadWriteOnce
+  persistentVolumeReclaimPolicy: Retain
+  storageClassName: standard  # This should match the storage class of the PVC
+  hostPath:
+    path: /mnt/data  # Use a directory on the node as the volume (or use other types for cloud providers)
+
