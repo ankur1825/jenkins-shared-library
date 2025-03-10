@@ -4,6 +4,7 @@ pipeline {
     parameters {
         string(name: 'APP_TYPE', defaultValue: '', description: 'Select Application Type (Java, Spring Boot, Python, Docker, NPM, .NET)')
         string(name: 'REPO_URL', defaultValue: '', description: 'Git Repository URL')
+        string(name: 'BRANCH', defaultValue: '', description: 'Git Branch')
         booleanParam(name: 'ENABLE_SONARQUBE', defaultValue: false, description: 'Enable SonarQube Analysis')
         booleanParam(name: 'ENABLE_OPA', defaultValue: false, description: 'Enable OPA Security Scan')
         string(name: 'IMAGE_NAME', defaultValue: 'my-app', description: 'Docker Image Name')
