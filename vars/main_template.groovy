@@ -1,5 +1,5 @@
 // This should be at the top of the main_template.groovy
-@Library('jenkins-shared-library@main') _
+load 'jenkins-shared-library@main/main_template.groovy'
 
 pipeline {
     agent any
