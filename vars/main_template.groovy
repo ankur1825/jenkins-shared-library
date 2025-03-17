@@ -46,7 +46,7 @@ pipeline {
                     }
 
                     if (appType == 'Java') {
-                        load 'Cost-optimization/jenkins_template/javaPipeline.groovy'
+                        load 'jenkins_template/javaPipeline.groovy'
                     } else if (appType == 'Python') {
                         load 'Cost-optimization/jenkins_template/pythonPipeline.groovy'
                     } else if (appType == 'Spring Boot') {
