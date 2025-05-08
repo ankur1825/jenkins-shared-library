@@ -1,67 +1,39 @@
-pipeline {
-    agent any
-    
-    parameters {
-        string(name: 'APP_TYPE', defaultValue: '', description: 'Select Application Type (Java, Spring Boot, Python, Docker, NPM, .NET)')
-        string(name: 'REPO_URL', defaultValue: '', description: 'Git Repository URL')
-        string(name: 'BRANCH', defaultValue: '', description: 'Git Branch')
-        booleanParam(name: 'ENABLE_SONARQUBE', defaultValue: false, description: 'Enable SonarQube Analysis')
-        booleanParam(name: 'ENABLE_OPA', defaultValue: false, description: 'Enable OPA Security Scan')
-        string(name: 'IMAGE_NAME', defaultValue: 'my-app', description: 'Docker Image Name')
+def call(Map params) {
+    def credentialsId = params.CREDENTIALS_ID
+    def appType = params.APP_TYPE
+    def repoUrl = params.REPO_URL
+    def branch = params.BRANCH
+    def enableSonarQube = params.ENABLE_SONARQUBE ?: false
+    def enableOpa = params.ENABLE_OPA ?: false
+    if (!repoUrl) {
+        error "Repository URL is missing. Please provide a valid URL."
+    }
+    stage('Clone shared library'){
+        git credentialsId: credentialsId, url: 'https://github.com/ankur1825/jenkins-shared-library.git', branch: 'main'
     }
 
-    stages {
-        stage('Select Application') {
-            steps {
-                script {
-                    def appType = params.APP_TYPE
-                    def repoUrl = params.REPO_URL
-                    
-                    if (!repoUrl) {
-                        error "Repository URL is missing. Please provide a valid URL."
-                    }
-                    
-                    stage('Clone Repository') {
-                        git url: repoUrl
-                    }
+    // Stage to check dir and content
+    stage('check current dir') {
+        sh 'pwd'
+        sh 'ls -lrth '
+    }
 
-                    stage('Validate Repository') {
-                        script {
-                            def detectedType = ''
+    // Load and run the appropriate app-specific pipeline
+    script {
 
-                            if (fileExists('pom.xml')) {
-                                detectedType = 'Java'
-                            } else if (fileExists('requirements.txt')) {
-                                detectedType = 'Python'
-                            } else if (fileExists('package.json')) {
-                                detectedType = 'NPM'
-                            } else {
-                                error "Unsupported or unknown repository type."
-                            }
+        // @Library('jenkins-shared-library@main') _
+        def pipelineScript = null
 
-                            if (appType != detectedType) {
-                                error "Mismatch: Selected app type is ${appType}, but repository seems to be ${detectedType}."
-                            }
-                        }
-                    }
-
-                    if (appType == 'Java') {
-                        load 'Cost-optimization/jenkins_template/javaPipeline.groovy'
-                    } else if (appType == 'Python') {
-                        load 'Cost-optimization/jenkins_template/pythonPipeline.groovy'
-                    } else if (appType == 'Spring Boot') {
-                        load 'Cost-optimization/jenkins_template/springBootPipeline.groovy'
-                    } else if (appType == 'Docker') {
-                        load 'Cost-optimization/jenkins_template/dockerPipeline.groovy'
-                    } else if (appType == 'NPM') {
-                        load 'Cost-optimization/jenkins_template/npmPipeline.groovy'
-                    } else if (appType == '.NET') {
-                        load 'Cost-optimization/jenkins_template/dotnetPipeline.groovy'
-                    } else {
-                        error 'Unsupported application type'
-                    }
-                }
-            }
+        if (appType == 'java') {
+            pipelineScript = load 'General_Scripts/Jenkins/jenkins_template/AppPipeline.groovy'
+        } else if (appType == 'python') {
+            pipelineScript = load 'General_Scripts/Jenkins/jenkins_template/AppPipeline.groovy'
+        } else if (appType == 'npm') {
+            pipelineScript = load 'General_Scripts/Jenkins/jenkins_template/AppPipeline.groovy'
+        } else {
+            error "Unsupported application type: ${appType}. Please choose 'java', 'python', or 'npm'."
         }
+
+        pipelineScript.run(params)
     }
 }

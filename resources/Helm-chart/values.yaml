@@ -1,0 +1,29 @@
+appName: "default-app"
+replicaCount: 1
+
+image:
+  repository: "nginx"
+  tag: "latest"
+  pullPolicy: IfNotPresent
+
+service:
+  type: ClusterIP
+  port: 80
+
+env: {}
+envFromSecrets: []
+volumeMounts: []
+volumes: []
+
+persistence:
+  enabled: true
+  storageClass: gp2
+  accessMode: ReadWriteOnce
+  size: 10Gi  
+
+ingress:
+  enabled: false
+  className: ""
+  annotations: {}
+  hosts: []
+  tls: [] 
