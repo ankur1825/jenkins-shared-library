@@ -25,11 +25,11 @@ def call(Map params) {
         def pipelineScript = null
 
         if (appType == 'java') {
-            pipelineScript = load 'General_Scripts/Jenkins/jenkins_template/AppPipeline.groovy'
+            pipelineScript = load 'jenkins_template/AppPipeline.groovy'
         } else if (appType == 'python') {
-            pipelineScript = load 'General_Scripts/Jenkins/jenkins_template/AppPipeline.groovy'
+            pipelineScript = load 'jenkins_template/AppPipeline.groovy'
         } else if (appType == 'npm') {
-            pipelineScript = load 'General_Scripts/Jenkins/jenkins_template/AppPipeline.groovy'
+            pipelineScript = load 'jenkins_template/AppPipeline.groovy'
         } else {
             error "Unsupported application type: ${appType}. Please choose 'java', 'python', or 'npm'."
         }
