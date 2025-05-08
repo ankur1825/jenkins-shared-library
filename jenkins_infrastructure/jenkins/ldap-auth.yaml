@@ -1,0 +1,19 @@
+jenkins:
+  securityRealm:
+    ldap:
+      configurations:
+        - server: "ldaps://ldap.jumpcloud.com:636"
+          rootDN: "o=6817d9a0d50cd4b1b5b81ba7,dc=jumpcloud,dc=com"
+          managerDN: "uid=ankur.kashyap,ou=Users,o=6817d9a0d50cd4b1b5b81ba7,dc=jumpcloud,dc=com"
+          managerPassword: "${LDAP_MANAGER_PASSWORD}"
+          userSearchBase: "ou=Users"
+          userSearch: "uid={0}"
+          userSearchFilter: "(uid={0})"
+          groupSearchBase: "ou=Groups"
+          inhibitInferRootDN: true
+      disableMailAddressResolver: false
+      mailAddressDomain: "horizonrelevance.com"
+  authorizationStrategy:
+    loggedInUsersCanDoAnything:
+      allowAnonymousRead: false
+

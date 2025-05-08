@@ -1,0 +1,158 @@
+namespaceOverride: horizon-relevance-dev
+replicaCount: 1
+
+image:
+  repository: ankur1825/horizon-jenkins
+  tag: "1.0.1"
+  pullPolicy: IfNotPresent
+
+imagePullSecrets: []
+nameOverride: ""
+fullnameOverride: ""
+
+serviceAccount:
+  create: false
+  automount: false
+  name: ""
+
+podAnnotations: {}
+podLabels: {}
+
+podSecurityContext:
+  runAsUser: 0
+  runAsGroup: 0
+  fsGroup: 0
+  fsGroupChangePolicy: "Always"
+
+securityContext:
+  runAsUser: 0
+  allowPrivilegeEscalation: true
+
+initContainers:
+  - name: volume-permission-fix
+    image: busybox
+    command: ["sh", "-c", "chmod -R 777 /var/jenkins_home"]
+    securityContext:
+      runAsUser: 0
+      runAsGroup: 0
+    volumeMounts:
+      - name: jenkins-home
+        mountPath: /var/jenkins_home
+
+service:
+  type: ClusterIP
+  port: 8080
+
+ingress:
+  enabled: true
+  className: nginx
+  annotations:
+    nginx.ingress.kubernetes.io/rewrite-target: /jenkins/$2
+    nginx.ingress.kubernetes.io/use-regex: "true"
+  hosts:
+    - host: horizonrelevance.com
+      paths:
+        - path: /jenkins(/|$)(.*)
+          pathType: ImplementationSpecific
+
+resources:
+  requests:
+    cpu: 500m
+    memory: 2Gi
+  limits:
+    cpu: 2
+    memory: 4Gi
+
+livenessProbe:
+  httpGet:
+    path: /jenkins/login
+    port: 8080
+  initialDelaySeconds: 120
+  periodSeconds: 10
+  timeoutSeconds: 5
+  failureThreshold: 10
+
+readinessProbe:
+  httpGet:
+    path: /jenkins/login
+    port: 8080
+  initialDelaySeconds: 120
+  periodSeconds: 10
+  timeoutSeconds: 5
+  failureThreshold: 10
+
+startupProbe:
+  httpGet:
+    path: /jenkins/login
+    port: 8080
+  initialDelaySeconds: 60
+  periodSeconds: 10
+  failureThreshold: 60
+
+autoscaling:
+  enabled: false
+  minReplicas: 1
+  maxReplicas: 100
+  targetCPUUtilizationPercentage: 80
+
+volumes:
+  - name: jenkins-home
+    persistentVolumeClaim:
+      claimName: jenkins-home
+  - name: jcasc-config-volume
+    configMap:
+      name: jenkins-jcasc-config
+  - name: ldap-init-volume
+    configMap:
+      name: ldap-init-script   
+  - name: docker-graph-storage
+    emptyDir: {}
+
+volumeMounts:
+  - name: jenkins-home
+    mountPath: /var/jenkins_home
+  - name: jcasc-config-volume
+    mountPath: /var/jenkins_home/casc_configs
+    readOnly: true
+  - name: ldap-init-volume
+    mountPath: /var/jenkins_home/init.groovy.d
+    readOnly: true  
+
+extraContainers:
+  - name: dind
+    image: docker:dind
+    securityContext:
+      privileged: true
+    volumeMounts:
+      - name: docker-graph-storage
+        mountPath: /var/lib/docker
+    ports:
+      - containerPort: 2375
+    env:
+      - name: DOCKER_TLS_CERTDIR
+        value: ""
+
+controller:
+  jenkinsOpts: --prefix=/jenkins
+  jenkinsUriPrefix: /jenkins
+  jenkinsUrlProtocol: https
+  jenkinsUrl: https://horizonrelevance.com/jenkins
+  javaOpts: >
+    -Djenkins.model.Jenkins.instance.setRootUrl=https://horizonrelevance.com/jenkins
+
+  containerEnv:
+    - name: LDAP_MANAGER_PASSWORD
+      valueFrom:
+        secretKeyRef:
+          name: jenkins-ldap
+          key: password
+    - name: CASC_JENKINS_CONFIG
+      value: /var/jenkins_home/casc_configs/ldap-auth.yaml
+    - name: DOCKER_HOST
+      value: "tcp://localhost:2375"
+
+persistence:
+  enabled: true
+  storageClass: gp2
+  accessMode: ReadWriteOnce
+  size: 10Gi

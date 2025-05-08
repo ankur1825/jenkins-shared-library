@@ -1,0 +1,31 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: ldap-init-script
+  namespace: horizon-relevance-dev
+data:
+  ldap-init.groovy: |
+    import jenkins.model.*
+    import hudson.security.*
+
+    def instance = Jenkins.getInstance()
+
+    def ldapRealm = new LDAPSecurityRealm(
+      "ldaps://ldap.jumpcloud.com:636",
+      "o=6817d9a0d50cd4b1b5b81ba7,dc=jumpcloud,dc=com",
+      "uid=ankur.kashyap,ou=Users,o=6817d9a0d50cd4b1b5b81ba7,dc=jumpcloud,dc=com",
+      System.getenv("LDAP_MANAGER_PASSWORD"),
+      "ou=Users",
+      "uid={0}",
+      "ou=Users",
+      null, // displayNameAttr
+      null, // emailAttr
+      null, // groupMembershipFilter
+      false,
+      false,
+      null, null, null, null, null
+    )
+
+    instance.setSecurityRealm(ldapRealm)
+    instance.save()
+

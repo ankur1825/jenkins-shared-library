@@ -1,0 +1,51 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ include "jenkins.fullname" . }}
+  namespace: {{ .Values.namespaceOverride }}
+  labels:
+    {{- include "jenkins.labels" . | nindent 4 }}
+spec:
+  replicas: {{ .Values.replicaCount }}
+  selector:
+    matchLabels:
+      {{- include "jenkins.selectorLabels" . | nindent 6 }}
+  template:
+    metadata:
+      labels:
+        {{- include "jenkins.selectorLabels" . | nindent 8 }}
+      annotations:
+        {{- toYaml .Values.podAnnotations | nindent 8 }}
+    spec:
+      serviceAccountName: {{ include "jenkins.serviceAccountName" . }}
+      initContainers:
+        {{- toYaml .Values.initContainers | nindent 8 }}
+      containers:
+        - name: jenkins
+          image: "{{ .Values.image.repository }}:{{ .Values.image.tag }}"
+          imagePullPolicy: {{ .Values.image.pullPolicy }}
+          ports:
+            - containerPort: 8080
+          env:
+            - name: JAVA_OPTS
+              value: {{ .Values.controller.javaOpts | quote }}
+            - name: JENKINS_OPTS
+              value: {{ .Values.controller.jenkinsOpts | quote }}
+            {{- if .Values.controller.containerEnv }}
+            {{ toYaml .Values.controller.containerEnv | nindent 12 }}
+            {{- end }}
+          livenessProbe:
+            {{ toYaml .Values.livenessProbe | nindent 12 }}
+          readinessProbe:
+            {{ toYaml .Values.readinessProbe | nindent 12 }}
+          startupProbe:
+            {{ toYaml .Values.startupProbe | nindent 12 }}
+          volumeMounts:
+            {{ toYaml .Values.volumeMounts | nindent 12 }}
+
+        {{- range .Values.extraContainers }}
+        - {{ toYaml . | nindent 10 }}
+        {{- end }}
+
+      volumes:
+        {{ toYaml .Values.volumes | nindent 8 }}

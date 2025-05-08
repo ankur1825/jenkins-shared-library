@@ -1,0 +1,49 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: jenkins-jcasc-config
+  namespace: horizon-relevance-dev
+data:
+  ldap-auth.yaml: |
+    jenkins:
+      securityRealm:
+        ldap:
+          configurations:
+            - server: "ldaps://ldap.jumpcloud.com:636"
+              rootDN: "o=6817d9a0d50cd4b1b5b81ba7,dc=jumpcloud,dc=com"
+              managerDN: "uid=ankur.kashyap,ou=Users,o=6817d9a0d50cd4b1b5b81ba7,dc=jumpcloud,dc=com"
+              managerPassword: "${LDAP_MANAGER_PASSWORD}"
+              userSearchBase: "ou=Users"
+              # userSearch: "uid={0}"
+              userSearch: "mail={0}"
+              groupSearchBase: "ou=Groups"
+              inhibitInferRootDN: true
+          disableMailAddressResolver: false
+          mailAddressDomain: "horizonrelevance.com"
+      authorizationStrategy:
+        projectMatrix:
+          entries:
+           - user:
+               name: "ankur.kashyap"
+               permissions: 
+                 - "Overall/Administer"
+           - user:
+               name: "shaileja.sharma"
+               permissions: 
+                 - "Overall/Administer"
+           - group: 
+               name: "authenticated"
+               permissions: 
+                 - "Job/Build"
+                 - "Job/Cancel"
+                 - "Job/Read"
+                 - "Job/Workspace"
+                 - "Overall/Read"
+                 - "View/Read"
+           - user:
+               name: "anonymous"
+               permissions: 
+                 - "Job/Read"
+                 - "Overall/Read"
+                 - "View/Read"                
+
