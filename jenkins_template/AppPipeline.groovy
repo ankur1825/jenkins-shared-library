@@ -62,8 +62,12 @@ def run(Map params) {
                     def repo = env.PRIVATE_REPO?.trim().toLowerCase().replaceAll('/$', '')
                     def imageName = "${repo}/${env.APP_NAME}:${env.TAG}".toLowerCase()
                     echo "Pushing Docker image: ${imageName}"
-                    sh "docker push ${imageName}"
-                }
+                    withCredentials([usernamePassword(credentialsId: 'dockerhub-creds', usernameVariable: 'DOCKER_USER', passwordVariable: 'DOCKER_PASS')]) {
+                    sh """
+                        echo "$DOCKER_PASS" | docker login -u "$DOCKER_USER" --password-stdin
+                        docker push ${imageName}
+                    """
+                }}
             }
 
             if (params.ENABLE_OPA?.toBoolean()) {
