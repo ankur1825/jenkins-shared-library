@@ -64,6 +64,10 @@ def call(Map params = [:]) {
 
         echo "Assuming namespace '${ns}' already exists and Jenkins has access"
 
+        echo "Checking for stale resources from previous release..."
+        kubectl delete deployment ${releaseName}-${releaseName} -n ${ns} --ignore-not-found || true
+        kubectl delete service ${releaseName}-${releaseName} -n ${ns} --ignore-not-found || true
+
         echo "Checking if Helm release '${releaseName}' exists in namespace '${ns}'..."
         if helm status ${releaseName} --namespace ${ns} > /dev/null 2>&1; then
             echo "Release exists. Running helm upgrade..."
