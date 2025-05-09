@@ -29,3 +29,8 @@ spec:
                   number: {{ $.Values.service.port }}
           {{- end }}
     {{- end }}
+  {{- if .Values.ingress.tls }}
+  tls:
+    {{- toYaml .Values.ingress.tls | nindent 4 }}
+  {{- end }}
+{{- end }}
