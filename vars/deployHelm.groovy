@@ -53,20 +53,17 @@ def call(Map params = [:]) {
         writeFile file: "${helmChartDir}/templates/ingress.yaml", text: libraryResource('Helm-chart/templates/ingress.yaml')
     }
 
-    // Use IRSA-based access (no KUBECONFIG)
+    // Use IRSA-based access (no KUBECONFIG needed anymore)
     def releaseName = userConfig.appName.toLowerCase().replaceAll(/[^a-z0-9\-]/, '-')
     def ns = userConfig.namespace
 
     sh """#!/bin/bash
         set -e
-        export KUBECONFIG=\$KUBECONFIG_FILE
-        echo "Checking if namespace '${ns}' exists..."
-        if kubectl get namespace ${ns} > /dev/null 2>&1; then
-            echo "Namespace '${ns}' exists."
-        else
-            echo "Creating namespace '${ns}'..."
-            kubectl create namespace ${ns}
-        fi
+        echo "Using IRSA for AWS authentication"
+        aws sts get-caller-identity
+
+        echo "Assuming namespace '${ns}' already exists and Jenkins has access"
+
         echo "Checking if Helm release '${releaseName}' exists in namespace '${ns}'..."
         if helm status ${releaseName} --namespace ${ns} > /dev/null 2>&1; then
             echo "Release exists. Running helm upgrade..."
