@@ -1,59 +1,63 @@
-apiVersion: apps/v1
-kind: Deployment
+{{- if .Values.ingress.enabled }}
+apiVersion: networking.k8s.io/v1
+kind: Ingress
 metadata:
   name: {{ include "generic-app.fullname" . }}
   namespace: {{ .Values.namespace }}
-spec:
-  replicas: {{ .Values.replicaCount }}
-  selector:
-    matchLabels:
-      app: {{ include "generic-app.name" . }}
-  template:
-    metadata:
-      labels:
+  labels:
         app: {{ include "generic-app.name" . }}
-    spec:
-      containers:
-        - name: {{ include "generic-app.fullname" . }}
-          image: "{{ .Values.image.repository }}:{{ .Values.image.tag }}"
-          imagePullPolicy: {{ .Values.image.pullPolicy }}
-          ports:
-            - containerPort: {{ .Values.service.port }}
-
-          # Basic env
-          env:
-            {{- range $key, $val := .Values.env }}
-            - name: {{ $key }}
-              value: "{{ $val }}"
-            {{- end }}
-
-            # Secret-based env
-            {{- range .Values.envFromSecrets }}
-            - name: {{ .name }}
-              valueFrom:
-                secretKeyRef:
-                  name: {{ .secretName }}
-                  key: {{ .key }}
-            {{- end }}
-
-          # Volume mounts
-          volumeMounts:
-            {{- range .Values.volumeMounts }}
-            - name: {{ .name }}
-              mountPath: {{ .mountPath }}
-              readOnly: {{ .readOnly | default true }}
-            {{- end }}
-
-      # Volumes
-      volumes:
-        {{- range .Values.volumes }}
-        - name: {{ .name }}
-          {{- if .secret }}
-          secret:
-            secretName: {{ .secret.secretName }}
-          {{- end }}
-          {{- if .configMap }}
-          configMap:
-            name: {{ .configMap.name }}
-          {{- end }}
+  {{- with .Values.ingress.annotations }}      
+  annotations:
+{{ toYaml .Values.ingress.annotations | indent 4 }}
+spec:
+  ingressClassName: {{ .Values.ingress.className }}
+  rules:
+  {{- range .Values.ingress.hosts }}
+    - host: {{ .host }}
+      http:
+        paths:
+        {{- range .paths }}
+          - path: {{ .path }}
+            pathType: {{ .pathType }}
+            backend:
+              service:
+                name: {{ include "fullname" $ }}
+                port:
+                  number: {{ .Values.service.port }}
         {{- end }}
+  {{- end }}
+{{- end }}
+
+{{- if .Values.ingress.enabled }}
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: {{ include "generic-app.fullname" . }}
+  namespace: {{ .Values.namespace }}
+  labels:
+        app: {{ include "generic-app.name" . }}
+  {{- with .Values.ingress.annotations }}
+  annotations:
+    {{- toYaml . | nindent 4 }}
+  {{- end }}
+spec:
+  {{- if .Values.ingress.className }}
+  ingressClassName:
+  {{ .Values.ingress.className }}
+  {{- end }}
+  rules:
+    {{- range .Values.ingress.hosts }}
+    - host: {{ .host }}
+      http:
+        paths: 
+          {{- range .paths }}
+          - path: {{ .path }}
+            pathType: {{ .pathType }}
+            backend:
+              service:
+                name: {{ include "generic-app.fullname" $ }}
+                port:
+                  number: {{ $.Values.service.port }}
+          {{- end }}
+    {{- end }}
+  {{- if .Values.ingress.tls }}
