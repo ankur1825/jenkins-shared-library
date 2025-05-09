@@ -53,29 +53,30 @@ def call(Map params = [:]) {
         writeFile file: "${helmChartDir}/templates/ingress.yaml", text: libraryResource('Helm-chart/templates/ingress.yaml')
     }
 
-    // Use IRSA-based access (no KUBECONFIG)
-    def releaseName = userConfig.appName.toLowerCase().replaceAll(/[^a-z0-9\-]/, '-')
-    def ns = userConfig.namespace
-
-    sh """#!/bin/bash
-        set -e
-        export KUBECONFIG=\$KUBECONFIG_FILE
-        echo "Checking if namespace '${ns}' exists..."
-        if kubectl get namespace ${ns} > /dev/null 2>&1; then
-            echo "Namespace '${ns}' exists."
-        else
-            echo "Creating namespace '${ns}'..."
-            kubectl create namespace ${ns}
-        fi
-        echo "Checking if Helm release '${releaseName}' exists in namespace '${ns}'..."
-        if helm status ${releaseName} --namespace ${ns} > /dev/null 2>&1; then
-            echo "Release exists. Running helm upgrade..."
-            helm upgrade ${releaseName} ${helmChartDir} -f custom-values.yaml --namespace ${ns}
-        else
-            echo "Release does not exist. Running helm install..."
-            helm install ${releaseName} ${helmChartDir} -f custom-values.yaml --namespace ${ns}
-        fi
-    """
+    // Run Helm
+    withCredentials([file(credentialsId: 'jenkins-kubeconfig', variable: 'KUBECONFIG_FILE')]) {
+        def releaseName = userConfig.appName.toLowerCase().replaceAll(/[^a-z0-9\-]/, '-')
+        def ns = userConfig.namespace
+        sh """#!/bin/bash
+            set -e
+            export KUBECONFIG=\$KUBECONFIG_FILE
+            echo "Checking if namespace '${ns}' exists..."
+            if kubectl get namespace ${ns} > /dev/null 2>&1; then
+                echo "Namespace '${ns}' exists."
+            else
+                echo "Creating namespace '${ns}'..."
+                kubectl create namespace ${ns}
+            fi
+            echo "Checking if Helm release '${releaseName}' exists in namespace '${ns}'..."
+            if helm status ${releaseName} --namespace ${ns} > /dev/null 2>&1; then
+                echo "Release exists. Running helm upgrade..."
+                helm upgrade ${releaseName} ${helmChartDir} -f custom-values.yaml --namespace ${ns}
+            else
+                echo "Release does not exist. Running helm install..."
+                helm install ${releaseName} ${helmChartDir} -f custom-values.yaml --namespace ${ns}
+            fi
+        """
+    }
 
     echo "Helm deployment completed."
 }
