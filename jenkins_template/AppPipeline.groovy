@@ -42,7 +42,16 @@ def run(Map params) {
             if (params.ENABLE_SONARQUBE?.toBoolean()) {
                 stage('Static Code Analysis') {
                     echo "Running SonarQube analysis..."
-                    sh 'sonar-scanner -Dsonar.projectKey=java-app'
+                    //def scannerHome = tool 'sonarqube';
+                    withSonarQubeEnv('sonarqube') {
+                      //sh "${scannerHome}/bin/sonar-scanner"
+                      sh "sonar-scanner"
+                    }
+                    timeout(time:2, unit:'MINUTES'){
+                        script{
+                            waitForQualityGate abortPipeline: true
+                        }
+                    }
                 }
             } else {
                 echo "Skipping Static Code Analysis as SonarQube is disabled."
