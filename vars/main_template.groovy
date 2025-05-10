@@ -3,8 +3,8 @@ def call(Map params) {
     def appType = params.APP_TYPE
     def repoUrl = params.REPO_URL
     def branch = params.BRANCH
-    def enableSonarQube = params.ENABLE_SONARQUBE ?: false
-    def enableOpa = params.ENABLE_OPA ?: false
+    def enableSonarQube = params.ENABLE_SONARQUBE.toBoolean()
+    def enableOpa = params.ENABLE_OPA.toBoolean()
     if (!repoUrl) {
         error "Repository URL is missing. Please provide a valid URL."
     }
