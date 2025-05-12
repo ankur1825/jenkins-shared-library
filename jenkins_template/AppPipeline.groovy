@@ -44,8 +44,14 @@ def run(Map params) {
                     echo "Running SonarQube analysis..."
                     def scannerHome = tool 'SONAR-SCANNER'
                     withSonarQubeEnv('sonarqube') {
-                      sh 'java -version' 
-                      sh "${scannerHome}/bin/sonar-scanner"
+                      withCredentials([string(credentialsId: 'sonarqube-token', variable: 'SONAR_TOKEN')]) {
+                            sh """
+                                ${scannerHome}/bin/sonar-scanner \
+                                -Dsonar.projectKey=webserice-application \
+                                -Dsonar.projectName=webserice-application \
+                                -Dsonar.host.url=https://horizonrelevance.com/sonarqube 
+                            """
+                      }
                     }
                     timeout(time:2, unit:'MINUTES'){
                         script{
