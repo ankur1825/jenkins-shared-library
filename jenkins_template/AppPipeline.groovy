@@ -42,10 +42,10 @@ def run(Map params) {
             if (params.ENABLE_SONARQUBE?.toBoolean()) {
                 stage('Static Code Analysis') {
                     echo "Running SonarQube analysis..."
-                    //def scannerHome = tool 'sonarqube';
+                    def scannerHome = tool 'SONAR-SCANNER'
                     withSonarQubeEnv('sonarqube') {
-                      //sh "${scannerHome}/bin/sonar-scanner"
-                      sh "sonar-scanner"
+                      sh 'java -version' 
+                      sh "${scannerHome}/bin/sonar-scanner"
                     }
                     timeout(time:2, unit:'MINUTES'){
                         script{
