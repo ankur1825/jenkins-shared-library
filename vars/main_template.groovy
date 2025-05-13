@@ -3,12 +3,25 @@ def call(Map params) {
     def appType = params.APP_TYPE
     def repoUrl = params.REPO_URL
     def branch = params.BRANCH
-    def enableSonarQube = params.ENABLE_SONARQUBE.toBoolean()
-    def enableOpa = params.ENABLE_OPA.toBoolean()
-    def enableTrivy = params.ENABLE_TRIVY.toBoolean()
+    def enableSonarQube = params.ENABLE_SONARQUBE.toBoolean() ?: false
+    def enableOpa = params.ENABLE_OPA.toBoolean() ?: false
+    def enableTrivy = params.ENABLE_TRIVY.toBoolean() ?: false
     if (!repoUrl) {
         error "Repository URL is missing. Please provide a valid URL."
     }
+
+    stage('Print Incoming Parameters') {
+        steps {
+            script {
+                echo "==== Incoming Parameters ===="
+                params.each { key, value ->
+                    echo "${key} = ${value}"
+                }
+                echo "=============================="
+            }
+        }
+    }
+    
     stage('Clone shared library'){
         git credentialsId: credentialsId, url: 'https://github.com/ankur1825/jenkins-shared-library.git', branch: 'main'
     }
