@@ -7,10 +7,18 @@ def run(Map params) {
                     git credentialsId: params.CREDENTIALS_ID, url: params.REPO_URL, branch: params.BRANCH
                 }
 
-                stage('directory check') {
-                    echo "checking directory"
-                    sh 'ls -lrth'
-                    sh 'pwd'
+                stage('directory check & Extract Base Image from Dockerfile') {
+                    script {
+                        echo "checking directory"
+                        sh 'ls -lrth'
+                        sh 'pwd'
+                        if (fileExists('Dockerfile')) {
+                            env.BASE_IMAGE = sh(script: "awk 'NR==1 && /^FROM/ {print \$2}' Dockerfile", returnStdout: true).trim()
+                            echo "Base Docker Image found: ${env.BASE_IMAGE}"
+                        } else {
+                            error "Dockerfile not found!"
+                        }
+                    }
                 }
             }
 
@@ -62,6 +70,26 @@ def run(Map params) {
             } else {
                 echo "Skipping Static Code Analysis as SonarQube is disabled."
             }
+
+            if (params.ENABLE_TRIVY?.toBoolean()) {
+                stage('Trivy Scan Base Image') {
+                    trivyScan(imageName: env.BASE_IMAGE)
+                }
+            } else {
+                echo "Skipping Docker Security Scan as Trivy is disabled."
+            }
+
+            if (params.ENABLE_TRIVY?.toBoolean()) {
+                stage('Trivy Scan Built Image') {
+                    script {
+                        def imageName = "${repo}/${env.APP_NAME}:${env.TAG}".toLowerCase()
+                        trivyScan(imageName: env.BUILT_IMAGE, uploadResults: true)
+                    }
+                }
+            } else {
+                echo "Skipping Docker Security Scan as Trivy is disabled."
+            }
+
 
             stage('Build Docker Image') {
                 script {
