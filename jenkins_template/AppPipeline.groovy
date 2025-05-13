@@ -13,7 +13,7 @@ def run(Map params) {
                         sh 'ls -lrth'
                         sh 'pwd'
                         if (fileExists('Dockerfile')) {
-                            env.BASE_IMAGE = sh(script: "awk 'NR==1 && /^FROM/ {print \$2}' Dockerfile", returnStdout: true).trim()
+                            env.BASE_IMAGE = sh(script: "awk '/^FROM/ {print \$2; exit}' Dockerfile", returnStdout: true).trim()
                             echo "Base Docker Image found: ${env.BASE_IMAGE}"
                         } else {
                             error "Dockerfile not found!"
