@@ -11,12 +11,29 @@ def call(Map params = [:]) {
     echo "Scanning Image: ${imageName}"
     echo "Upload Results: ${uploadResults}"
 
+    sh 'mkdir -p trivy-scan-workdir'
+    dir('trivy-scan-workdir') {
+        writeFile file: 'Chart.yaml', text: libraryResource('trivy_scanner/trivy-cli-scan/Chart.yaml')
+        writeFile file: 'values.yaml', text: libraryResource('trivy_scanner/trivy-cli-scan/values.yaml')
+        // Copy other necessary templates if needed
+        sh 'mkdir -p templates'
+        writeFile file: 'templates/deployment.yaml', text: libraryResource('trivy_scanner/trivy-cli-scan/templates/deployment.yaml')
+        // Add other files under templates/ as needed
+    }
+
     sh """
-        helm upgrade --install trivy-cli-scan ./trivy_scanner/trivy-cli-scan \
+        helm upgrade --install trivy-cli-scan ./trivy-scan-workdir \
             --namespace horizon-relevance-dev \
             --set scan.imageName=${imageName} \
             --set scan.uploadResults=${uploadResults}
     """
+
+    // sh """
+    //     helm upgrade --install trivy-cli-scan ./trivy_scanner/trivy-cli-scan \
+    //         --namespace horizon-relevance-dev \
+    //         --set scan.imageName=${imageName} \
+    //         --set scan.uploadResults=${uploadResults}
+    // """
 
     echo "✅ Trivy scan triggered successfully for ${imageName}"
 }
