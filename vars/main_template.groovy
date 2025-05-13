@@ -5,6 +5,7 @@ def call(Map params) {
     def branch = params.BRANCH
     def enableSonarQube = params.ENABLE_SONARQUBE.toBoolean()
     def enableOpa = params.ENABLE_OPA.toBoolean()
+    def enableOpa = params.ENABLE_TRIVY.toBoolean()
     if (!repoUrl) {
         error "Repository URL is missing. Please provide a valid URL."
     }
