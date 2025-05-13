@@ -1,0 +1,20 @@
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: trivy-scan-{{ randAlphaNum 5 | lower }}
+  namespace: {{ .Values.namespace }}
+spec:
+  backoffLimit: 0
+  template:
+    spec:
+      containers:
+      - name: trivy-cli
+        image: "{{ .Values.image.repository }}:{{ .Values.image.tag }}"
+        imagePullPolicy: {{ .Values.image.pullPolicy }}
+        args:
+        - "--image"
+        - "{{ .Values.scan.imageName }}"
+        {{- if .Values.scan.uploadResults }}
+        - "--upload"
+        {{- end }}
+      restartPolicy: Never
