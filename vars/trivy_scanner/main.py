@@ -1,7 +1,7 @@
 # main.py
 import click
 from scanner import scan_image
-from parser import parse_trivy_output
+from trivy_parser import parse_trivy_output
 from api_client import upload_vulnerabilities
 
 @click.command()
