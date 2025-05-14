@@ -17,7 +17,7 @@ def call(Map params = [:]) {
         writeFile file: 'values.yaml', text: libraryResource('trivy_helm/trivy-cli-scan/values.yaml')
         // Copy other necessary templates if needed
         sh 'mkdir -p templates'
-        writeFile file: 'templates/deployment.yaml', text: libraryResource('trivy_helm/trivy-cli-scan/templates/deployment.yaml')
+        writeFile file: 'templates/job.yaml', text: libraryResource('trivy_helm/trivy-cli-scan/templates/job.yaml')
         // Add other files under templates/ as needed
     }
 
