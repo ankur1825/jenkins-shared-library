@@ -1,4 +1,5 @@
 # models.py
+from dataclasses import dataclass
 @dataclass
 class Vulnerability:
     target: str
