@@ -7,6 +7,7 @@ class Vulnerability:
     installed_version: str
     vulnerability_id: str
     severity: str
+    title: str
     description: str
     fixed_version: str
     cvss_score: float = 0.0
