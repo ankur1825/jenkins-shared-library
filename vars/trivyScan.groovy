@@ -13,11 +13,11 @@ def call(Map params = [:]) {
 
     sh 'mkdir -p trivy-scan-workdir'
     dir('trivy-scan-workdir') {
-        writeFile file: 'Chart.yaml', text: libraryResource('trivy_scanner/trivy-cli-scan/Chart.yaml')
-        writeFile file: 'values.yaml', text: libraryResource('trivy_scanner/trivy-cli-scan/values.yaml')
+        writeFile file: 'Chart.yaml', text: libraryResource('trivy_helm/trivy-cli-scan/Chart.yaml')
+        writeFile file: 'values.yaml', text: libraryResource('trivy_helm/trivy-cli-scan/values.yaml')
         // Copy other necessary templates if needed
         sh 'mkdir -p templates'
-        writeFile file: 'templates/deployment.yaml', text: libraryResource('trivy_scanner/trivy-cli-scan/templates/deployment.yaml')
+        writeFile file: 'templates/deployment.yaml', text: libraryResource('trivy_helm/trivy-cli-scan/templates/deployment.yaml')
         // Add other files under templates/ as needed
     }
 
