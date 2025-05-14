@@ -37,20 +37,4 @@ def call(Map params) {
             script {
 
                 // @Library('jenkins-shared-library@main') _
-                def pipelineScript = null
-
-                if (appType == 'java') {
-                    pipelineScript = load 'jenkins_template/AppPipeline.groovy'
-                } else if (appType == 'python') {
-                    pipelineScript = load 'jenkins_template/AppPipeline.groovy'
-                } else if (appType == 'npm') {
-                    pipelineScript = load 'jenkins_template/AppPipeline.groovy'
-                } else {
-                    error "Unsupported application type: ${appType}. Please choose 'java', 'python', or 'npm'."
-                }
-
-                pipelineScript.run(params)
-            }
-        }
-    }
-}        
+                def pipelineScript =

@@ -82,6 +82,7 @@ def run(Map params) {
             if (params.ENABLE_TRIVY?.toBoolean()) {
                 stage('Trivy Scan Built Image') {
                     script {
+                        def repo = env.PRIVATE_REPO?.trim().toLowerCase().replaceAll('/$', '')
                         def imageName = "${repo}/${env.APP_NAME}:${env.TAG}".toLowerCase()
                         trivyScan(imageName: env.BUILT_IMAGE, uploadResults: true)
                     }
