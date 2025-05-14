@@ -84,7 +84,7 @@ def run(Map params) {
                     script {
                         def repo = env.PRIVATE_REPO?.trim().toLowerCase().replaceAll('/$', '')
                         def imageName = "${repo}/${env.APP_NAME}:${env.TAG}".toLowerCase()
-                        trivyScan(imageName: env.BUILT_IMAGE, uploadResults: true)
+                        trivyScan(imageName: imageName, uploadResults: true)
                     }
                 }
             } else {
