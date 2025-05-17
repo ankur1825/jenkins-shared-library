@@ -1,0 +1,38 @@
+# opa-deployment.yaml
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: opa-server
+  namespace: horizon-relevance-dev
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: opa
+  template:
+    metadata:
+      labels:
+        app: opa
+    spec:
+      containers:
+      - name: opa
+        image: openpolicyagent/opa:latest
+        args:
+          - "run"
+          - "--server"
+          - "--addr=0.0.0.0:8181"
+          - "--set=decision_logs.console=true"
+        ports:
+        - containerPort: 8181
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: opa
+  namespace: horizon-relevance-dev
+spec:
+  ports:
+  - port: 8181
+    targetPort: 8181
+  selector:
+    app: opa

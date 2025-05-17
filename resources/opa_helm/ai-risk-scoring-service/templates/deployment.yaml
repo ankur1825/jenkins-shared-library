@@ -1,0 +1,24 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: ai-risk-scoring
+  namespace: {{ .Values.namespaceOverride }}
+  labels:
+    app: ai-risk-scoring
+spec:
+  replicas: {{ .Values.replicaCount }}
+  selector:
+    matchLabels:
+      app: ai-risk-scoring
+  template:
+    metadata:
+      labels:
+        app: ai-risk-scoring
+    spec:
+      containers:
+        - name: ai-risk-scoring
+          image: "{{ .Values.image.repository }}:{{ .Values.image.tag }}"
+          imagePullPolicy: {{ .Values.image.pullPolicy }}
+          ports:
+            - containerPort: 8000
+          resources: {{- toYaml .Values.resources | nindent 12 }}

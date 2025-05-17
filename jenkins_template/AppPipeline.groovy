@@ -91,6 +91,30 @@ def run(Map params) {
                 echo "Skipping Docker Security Scan as Trivy is disabled."
             }
 
+            if (params.ENABLE_OPA?.toBoolean()) {
+                stage('OPA Policy Evaluation') {
+                    script {
+                        def repo = env.PRIVATE_REPO?.trim().toLowerCase().replaceAll('/$', '')
+                        def imageName = "${repo}/${env.APP_NAME}:${env.TAG}".toLowerCase()
+
+                        opaEnsureServerRunning()  // ensure OPA pod is deployed
+
+                        def opaInput = createOPAInput(imageName, env.TAG)
+
+                        def enrichedOPAResults = opaEvaluateCurl(
+                            inputJson: opaInput,
+                            imageName: imageName
+                        )
+
+                        echo "OPA Risk Evaluation Complete. Total Enriched Risks: ${enrichedOPAResults.size()}"
+                    }
+                }
+            } else {
+                echo "Skipping OPA Evaluation as it is disabled."
+            }
+
+
+
 
             stage('Build Docker Image') {
                 script {
@@ -114,15 +138,15 @@ def run(Map params) {
                 }}
             }
 
-            if (params.ENABLE_OPA?.toBoolean()) {
-                stage('Docker Security Scan') {
-                    echo "Running Docker Security Scan with OPA and Trivy..."
-                    sh 'opa eval --input dockerfile.json policy.rego || true'
-                    sh "trivy image ${env.PRIVATE_REPO}/${env.APP_NAME}:${env.TAG} || true"
-                }
-            } else {
-                echo "Skipping Docker Security Scan as OPA is disabled."
-            }
+            // if (params.ENABLE_OPA?.toBoolean()) {
+            //     stage('Docker Security Scan') {
+            //         echo "Running Docker Security Scan with OPA and Trivy..."
+            //         sh 'opa eval --input dockerfile.json policy.rego || true'
+            //         sh "trivy image ${env.PRIVATE_REPO}/${env.APP_NAME}:${env.TAG} || true"
+            //     }
+            // } else {
+            //     echo "Skipping Docker Security Scan as OPA is disabled."
+            // }
 
             stage('deploy to Kubernetes ') {
                 script {
