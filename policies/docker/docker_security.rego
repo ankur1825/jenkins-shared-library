@@ -25,12 +25,11 @@ deny[msg] {
 
 deny[msg] {
   some port
-  input.exposed_ports[port]
+  input.ports[port]
   port == 2375
   msg := sprintf("Docker Daemon port (%v) exposed in image. Critical risk.", [port])
 }
 
-# Allow rule (for completeness)
 allow {
   not deny
 }
