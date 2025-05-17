@@ -16,5 +16,10 @@ def call(Map params = [:]) {
     echo "OPA Response: ${opaResponse}"
 
     def opaResult = readJSON text: opaResponse
+
+    if (!opaResult?.result) {
+    error "OPA policy evaluation failed: ${opaResult.warning ?: 'No result returned.'}"
+    }
+    
     return opaResult.result
 }

@@ -5,5 +5,5 @@ def call(String appName, String tag) {
         "secrets_detected": false,
         "ports": [80, 443, 22]
     ]
-    return groovy.json.JsonOutput.toJson(input)
+    return groovy.json.JsonOutput.toJson([input: input])
 }
