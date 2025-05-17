@@ -1,6 +1,6 @@
 def call() {
     def isRunning = sh(
-        script: "kubectl get pods -n horizon-relevance-dev -l app=opa --field-selector=status.phase=Running | grep opa || true",
+        script: "kubectl get pods -n horizon-relevance-dev -l app=opa --no-headers | grep Running || true",
         returnStatus: true
     ) == 0
 
