@@ -18,7 +18,7 @@ deny[msg] {
 # Deny images exposing sensitive ports
 deny[msg] {
   some port
-  input.exposed_ports[port]
+  input.ports[port]
   port == 22
   msg := sprintf("SSH port (%v) exposed in image. Medium risk.", [port])
 }
