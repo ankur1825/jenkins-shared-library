@@ -21,9 +21,19 @@ spec:
           - "run"
           - "--server"
           - "--addr=0.0.0.0:8181"
-          - "--set=decision_logs.console=true"
-        ports:
-        - containerPort: 8181
+          - "/bundles/horizon-relevance-bundle.tar.gz"
+        volumeMounts:
+        - name: opa-bundle
+          mountPath: /bundles
+          readOnly: true
+      volumes:
+      - name: opa-bundle
+        configMap:
+          name: opa-bundle-config
+          items:
+            - key: horizon-relevance-bundle.tar.gz
+              path: horizon-relevance-bundle.tar.gz  
+
 ---
 apiVersion: v1
 kind: Service
