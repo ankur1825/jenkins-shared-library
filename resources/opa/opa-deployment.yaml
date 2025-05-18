@@ -1,4 +1,3 @@
-# opa-deployment.yaml
 apiVersion: apps/v1
 kind: Deployment
 metadata:
@@ -14,35 +13,16 @@ spec:
       labels:
         app: opa
     spec:
-      containers:
-      - name: opa
-        image: openpolicyagent/opa:latest
+      initContainers:
+      - name: fetch-bundle
+        image: alpine:3.18
+        command: ["/bin/sh", "-c"]
         args:
-          - "run"
-          - "--server"
-          - "--addr=0.0.0.0:8181"
-          - "/bundles/horizon-relevance-bundle.tar.gz"
+          - apk add curl tar && curl -sSL https://raw.githubusercontent.com/ankur1825/jenkins-shared-library/main/horizon-relevance-bundle.tar.gz -o /bundles/horizon-relevance-bundle.tar.gz
         volumeMounts:
         - name: opa-bundle
           mountPath: /bundles
-          readOnly: true
-      volumes:
-      - name: opa-bundle
-        configMap:
-          name: opa-bundle-config
-          items:
-            - key: horizon-relevance-bundle.tar.gz
-              path: horizon-relevance-bundle.tar.gz  
 
----
-apiVersion: v1
-kind: Service
-metadata:
-  name: opa
-  namespace: horizon-relevance-dev
-spec:
-  ports:
-  - port: 8181
-    targetPort: 8181
-  selector:
-    app: opa
+      containers:
+      - name: opa
+        image: o
