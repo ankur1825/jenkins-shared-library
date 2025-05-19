@@ -1,35 +1,27 @@
 package docker.security
 
-default allow = true
-default deny = []
+default allow := true
 
-# Deny images running as root user
-deny[msg] if {
+deny[msg] {
   input.root_user == true
-  msg = "Docker image is running as root user. This is a critical risk."
+  msg := "Docker image is running as root user. This is a critical risk."
 }
 
-# Deny images with detected secrets
-deny[msg] if {
+deny[msg] {
   input.secrets_detected == true
-  msg = "Secrets detected in Docker image layers. Critical vulnerability."
+  msg := "Secrets detected in Docker image layers. Critical vulnerability."
 }
 
-# Deny images exposing sensitive ports
-deny[msg] if {
-  some port
-  input.ports[_] == port
+deny[msg] {
+  some i
+  port := input.ports[i]
   port == 22
-  msg = sprintf("SSH port (%v) exposed in image. Medium risk.", [port])
+  msg := sprintf("SSH port (%v) exposed in image. Medium risk.", [port])
 }
 
-deny[msg] if {
-  some port
-  input.ports[_] == port
+deny[msg] {
+  some i
+  port := input.ports[i]
   port == 2375
-  msg = sprintf("Docker Daemon port (%v) exposed in image. Critical risk.", [port])
-}
-
-allow if {
-  not deny
+  msg := sprintf("Docker Daemon port (%v) exposed in image. Critical risk.", [port])
 }

@@ -14,4 +14,3 @@ spec:
       name: http
   selector:
     app: ai-risk-scoring
-
