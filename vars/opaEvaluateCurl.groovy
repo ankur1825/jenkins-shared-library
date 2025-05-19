@@ -5,7 +5,7 @@ def call(Map params = [:]) {
 
     def inputJson = params.inputJson
     def opaUrl = params.get('opaUrl', "http://opa.horizon-relevance-dev.svc.cluster.local:8181/v1/data/docker/security/deny")
-    def backendUrl = params.get('backendUrl', "https://horizonrelevance.com/pipeline/api/opa/risks")
+    def backendUrl = params.get('backendUrl', "https://horizonrelevance.com/pipeline/api/opa/risks/")
     def imageName = params.get('imageName', 'unknown')
 
     echo "Evaluating OPA Policy..."
