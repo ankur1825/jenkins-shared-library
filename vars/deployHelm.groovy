@@ -9,7 +9,6 @@ def call(Map params = [:]) {
 
     def userConfig = readJSON file: configPath
 
-    // 🛠️ Transform image repository if PRIVATE_REPO or imageRepo is present
     def rawRepo = userConfig.imageRepo ?: userConfig.PRIVATE_REPO
     if (rawRepo) {
         def transformedRepo = rawRepo.replace(
@@ -18,7 +17,6 @@ def call(Map params = [:]) {
         )
         def finalRepo = userConfig.AppName ? "${transformedRepo}/${userConfig.AppName}".toLowerCase() : transformedRepo
 
-        // Set .image field in-place
         userConfig.image = [
             repository : finalRepo,
             tag        : userConfig.tag ?: 'latest',
@@ -26,19 +24,16 @@ def call(Map params = [:]) {
         ]
     }
 
-    // Inject defaults if not present
     userConfig.appName      = userConfig.AppName ?: userConfig.appName ?: 'default-app'
     userConfig.namespace    = userConfig.namespace ?: 'default'
     userConfig.replicaCount = userConfig.replicaCount ?: 1
 
-    // Write full config to custom-values.yaml dynamically
     def jsonString = JsonOutput.toJson(userConfig)
     def prettyYaml = JsonOutput.prettyPrint(jsonString)
     writeFile file: 'custom-values.yaml', text: prettyYaml
 
     echo "Generated custom-values.yaml with all dynamic fields from config.json"
 
-    // Prepare Helm chart from shared lib
     def helmChartDir = "generic-helm"
     sh "mkdir -p ${helmChartDir}/templates"
 
@@ -48,16 +43,47 @@ def call(Map params = [:]) {
     writeFile file: "${helmChartDir}/templates/deployment.yaml", text: libraryResource('Helm-chart/templates/deployment.yaml')
     writeFile file: "${helmChartDir}/templates/service.yaml", text: libraryResource('Helm-chart/templates/service.yaml')
 
-    // Conditionally include ingress.yaml if user enables ingress
     if (userConfig.ingress?.enabled) {
         writeFile file: "${helmChartDir}/templates/ingress.yaml", text: libraryResource('Helm-chart/templates/ingress.yaml')
     }
 
-    // Use IRSA-based access (no KUBECONFIG needed anymore)
+    echo "🔍 Running OPA policy check for Kubernetes manifests..."
+    sh """
+        helm template ${helmChartDir} > rendered.yaml
+        conftest test rendered.yaml -p jenkins-shared-library/resources/policy --output json > opa-k8s-result.json
+    """
+
+    def opaResult = readJSON file: 'opa-k8s-result.json'
+    def violations = []
+
+    opaResult.each { entry ->
+        entry.failures.each { failure ->
+            violations << [
+                source: 'OPA-Kubernetes',
+                target: userConfig.appName,
+                package_name: 'OPA Policy',
+                vulnerability_id: failure.msg,
+                severity: failure.metadata?.severity?.toUpperCase() ?: 'HIGH',
+                risk_score: failure.metadata?.score ?: 70,
+                description: failure.metadata?.description ?: failure.msg,
+                fixed_version: failure.metadata?.remediation ?: 'N/A'
+            ]
+        }
+    }
+
+    if (violations.size() > 0) {
+        def opaPayload = [vulnerabilities: violations]
+        writeJSON file: 'opa-k8s-upload.json', json: opaPayload, pretty: 2
+        sh "curl -s -X POST https://horizonrelevance.com/pipeline/api/vulnerabilities -H 'Content-Type: application/json' -d @opa-k8s-upload.json"
+        error("❌ OPA policy violations found in Helm/K8s manifests. Failing pipeline.")
+    } else {
+        echo "✅ No OPA Kubernetes policy violations found."
+    }
+
     def releaseName = userConfig.appName.toLowerCase().replaceAll(/[^a-z0-9\-]/, '-')
     def ns = userConfig.namespace
 
-    sh """#!/bin/bash
+    sh """
         set -e
         echo "Using IRSA for AWS authentication"
         aws sts get-caller-identity
