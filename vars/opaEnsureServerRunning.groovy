@@ -13,7 +13,10 @@ def call() {
 
         writeFile file: 'opa-deployment.yaml', text: libraryResource('opa/opa-deployment.yaml')
 
-        sh '''
+        sh '''#!/bin/bash
             kubectl apply -f opa-deployment.yaml
             echo "⏳ Waiting for OPA to be ready..."
-            kubectl rollout status deployment/opa-server 
+            kubectl rollout status deployment/opa-server -n horizon-relevance-dev --timeout=60s
+        '''
+    }
+}
