@@ -1,19 +1,19 @@
 package kubernetes
 
-object := input
+default object := input
 
-# Safely generate containers list using generator expression
-containers[c] {
+# Return all containers in a Deployment or Pod
+containers := [c | 
     some i
     c := object.spec.template.spec.containers[i]
-}
+]
 
-# Check if a specific label key exists
-has_label(key) {
+# Check if label key exists
+has_label(key) if {
     object.metadata.labels[key]
 }
 
-# Return the value of a label by key
-get_label(key) := val {
+# Get label value
+get_label(key) := val if {
     val := object.metadata.labels[key]
 }
