@@ -76,6 +76,7 @@ def call(Map params = [:]) {
                 source: 'OPA-Kubernetes',
                 target: userConfig.appName,
                 package_name: 'OPA Policy',
+                installed_version: "N/A", 
                 vulnerability_id: failure.msg,
                 severity: failure.metadata?.severity?.toUpperCase() ?: 'HIGH',
                 risk_score: failure.metadata?.score ?: 70,
