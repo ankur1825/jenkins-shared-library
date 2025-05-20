@@ -50,15 +50,15 @@ split_image(image) := [image, "latest"] if {
 }
 
 split_image(image) := [image_name, tag] if {
-	count(split(image, ":")) == 2
 	parts := split(image, ":")
+	count(parts) == 2
 	image_name := parts[0]
 	tag := parts[1]
 }
 
 pod_containers(pod) := all_containers if {
 	keys := {"containers", "initContainers"}
-	all_containers := [c | k := keys[_]; c := pod.spec[k][_]]
+	all_containers := [c | k := keys[_]; pod.spec[k]; c := pod.spec[k][_]]
 }
 
 containers[container] if {
@@ -122,31 +122,35 @@ priviledge_escalation_allowed(c) if {
 canonify_cpu(orig) := new if {
 	is_number(orig)
 	new := orig * 1000
-} else if {
+}
+
+canonify_cpu(orig) := new if {
 	not is_number(orig)
 	endswith(orig, "m")
 	new := to_number(replace(orig, "m", ""))
-} else if {
+}
+
+canonify_cpu(orig) := new if {
 	not is_number(orig)
 	not endswith(orig, "m")
-	regex.match("^[0-9]+$", orig)
+	re_match("^[0-9]+$", orig)
 	new := to_number(orig) * 1000
 }
 
-mem_multiple("E") := 1000000000000000000000
-mem_multiple("P") := 1000000000000000000
-mem_multiple("T") := 1000000000000000
-mem_multiple("G") := 1000000000000
-mem_multiple("M") := 1000000000
-mem_multiple("k") := 1000000
-mem_multiple("") := 1000
-mem_multiple("m") := 1
-mem_multiple("Ki") := 1024000
-mem_multiple("Mi") := 1048576000
-mem_multiple("Gi") := 1073741824000
-mem_multiple("Ti") := 1099511627776000
-mem_multiple("Pi") := 1125899906842624000
-mem_multiple("Ei") := 1152921504606846976000
+mem_multiple("E") := 1000000000000000000000 if true
+mem_multiple("P") := 1000000000000000000 if true
+mem_multiple("T") := 1000000000000000 if true
+mem_multiple("G") := 1000000000000 if true
+mem_multiple("M") := 1000000000 if true
+mem_multiple("k") := 1000000 if true
+mem_multiple("") := 1000 if true
+mem_multiple("m") := 1 if true
+mem_multiple("Ki") := 1024000 if true
+mem_multiple("Mi") := 1048576000 if true
+mem_multiple("Gi") := 1073741824000 if true
+mem_multiple("Ti") := 1099511627776000 if true
+mem_multiple("Pi") := 1125899906842624000 if true
+mem_multiple("Ei") := 1152921504606846976000 if true
 
 get_suffix(mem) := suffix if {
 	is_string(mem)
@@ -154,24 +158,30 @@ get_suffix(mem) := suffix if {
 	sub := substring(mem, count(mem) - 2, -1)
 	mem_multiple(sub)
 	suffix := sub
-} else if {
+}
+
+get_suffix(mem) := suffix if {
 	is_string(mem)
 	count(mem) > 0
 	sub := substring(mem, count(mem) - 1, -1)
 	mem_multiple(sub)
 	suffix := sub
-} else {
-	suffix := ""
+}
+
+get_suffix(_) := "" if {
+	true
 }
 
 canonify_mem(orig) := new if {
 	is_number(orig)
 	new := orig * 1000
-} else if {
+}
+
+canonify_mem(orig) := new if {
 	not is_number(orig)
 	suffix := get_suffix(orig)
 	raw := replace(orig, suffix, "")
-	regex.match("^[0-9]+$", raw)
+	re_match("^[0-9]+$", raw)
 	new := to_number(raw) * mem_multiple(suffix)
 }
 
@@ -203,8 +213,8 @@ has_liveness_probe(container) if {
 	not is_null(container.livenessProbe)
 }
 
-is_null(x) if {
-	x == null
+is_null(value) if {
+	value == null
 }
 
 has_secret_env_var(container) if {
@@ -217,7 +227,11 @@ resolve_registry(image) := registry if {
 	count(parts) > 1
 	is_possible_registry(parts[0])
 	registry := parts[0]
-} else := "unknown registry"
+}
+
+resolve_registry(_) := "unknown registry" if {
+	true
+}
 
 is_possible_registry(part) if {
 	contains(part, ".")
@@ -231,7 +245,7 @@ known_registry(registry) if {
 	registry == trusted_registries[_]
 }
 
-trusted_registries := {}
+trusted_registries := {"docker.io", "quay.io", "ghcr.io", "public.ecr.aws"}
 
 pod_replicas_lt_or_equal_one(replicas) if {
 	replicas <= 1
