@@ -1,5 +1,8 @@
 package kubernetes
 
+import future.keywords
+import future.builtins
+
 default is_gatekeeper := false
 
 is_gatekeeper if {
@@ -89,7 +92,7 @@ pods[pod] if {
 volumes[volume] if {
 	some pod
 	pods[pod]
-	pod.spec.volumes
+	has_field(pod.spec, "volumes")
 	volume := pod.spec.volumes[_]
 }
 
@@ -137,7 +140,7 @@ canonify_cpu(orig) := new if {
 canonify_cpu(orig) := new if {
 	not is_number(orig)
 	not endswith(orig, "m")
-	re_match("^[0-9]+$", orig)
+	regex.match("^[0-9]+$", orig)
 	new := to_number(orig) * 1000
 }
 
@@ -184,7 +187,7 @@ canonify_mem(orig) := new if {
 	not is_number(orig)
 	suffix := get_suffix(orig)
 	raw := replace(orig, suffix, "")
-	re_match("^[0-9]+$", raw)
+	regex.match("^[0-9]+$", raw)
 	new := to_number(raw) * mem_multiple(suffix)
 }
 
