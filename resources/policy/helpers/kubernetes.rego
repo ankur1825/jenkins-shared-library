@@ -1,92 +1,30 @@
 package kubernetes
 
-# Detect if input is wrapped (Gatekeeper) or raw (Conftest)
-default is_gatekeeper := false
+default object = input
 
-is_gatekeeper := true {
-  input.review.object
-}
+# Extract object depending on Gatekeeper or Conftest
+object = input.review.object if input.review
 
-object := input {
-  not is_gatekeeper
-}
+# Metadata helpers
+name = object.metadata.name
+kind = object.kind
 
-object := input.review.object {
-  is_gatekeeper
-}
+is_deployment if kind == "Deployment"
+is_pod if kind == "Pod"
 
-# Format message based on context
-format(msg) := output {
-  is_gatekeeper
-  output := {"msg": msg}
-}
+# Basic container iterator
+containers[c] if object.spec.template.spec.containers[_] == c
+containers[c] if object.spec.containers[_] == c
 
-format(msg) := msg {
-  not is_gatekeeper
-}
+# Check readiness and liveness
+has_readiness_probe(c) if c.readinessProbe
+has_liveness_probe(c) if c.livenessProbe
 
-# Common fields
-name := object.metadata.name
-kind := object.kind
-
-# Basic kind checks
-is_deployment := kind == "Deployment"
-is_pod := kind == "Pod"
-
-# Extract containers
-containers[container] {
-  is_pod
-  container := object.spec.containers[_]
-}
-
-containers[container] {
-  is_deployment
-  container := object.spec.template.spec.containers[_]
-}
-
-# Check for image using latest tag
-split_image(image) := [_, tag] {
+# Parse image tag (e.g., "nginx:latest" -> ["nginx", "latest"])
+split_image(image) = parts if {
   parts := split(image, ":")
-  count(parts) == 2
-  tag := parts[1]
 }
 
-split_image(image) := [_, "latest"] {
-  not contains(image, ":")
-}
-
-# Registry resolution (simple version)
-resolve_registry(image) := registry {
-  parts := split(image, "/")
-  count(parts) > 1
-  registry := parts[0]
-}
-
-resolve_registry(_) := "unknown"
-
-# Simple memory suffix extractor (supports "Mi" style)
-get_suffix(mem) := suffix {
-  endswith(mem, suffix)
-  suffix := "Mi"
-}
-
-# Memory parsing
-canonify_mem(mem) := val {
-  suffix := get_suffix(mem)
-  raw := replace(mem, suffix, "")
-  val := to_number(raw) * 1048576
-}
-
-# Field check
-has_field(obj, field) {
-  obj[field]
-}
-
-# Liveness and readiness probe check
-has_readiness_probe(container) {
-  container.readinessProbe
-}
-
-has_liveness_probe(container) {
-  container.livenessProbe
-}
+# Format message for both OPA CLI and Gatekeeper
+format(msg) = {"msg": msg} if input.review
+format(msg) = msg if not input.review
