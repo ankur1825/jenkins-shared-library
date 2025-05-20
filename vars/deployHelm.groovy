@@ -50,9 +50,9 @@ def call(Map params = [:]) {
     // Write policy folders into workspace so conftest can access
     sh 'mkdir -p opa-policies/deny opa-policies/violation opa-policies/warn'
 
-    writeFile file: 'opa-policies/deny/deny.rego', text: libraryResource('resources/policy/deny/deny.rego')
-    writeFile file: 'opa-policies/violation/violation.rego', text: libraryResource('resources/policy/violation/violation.rego')
-    writeFile file: 'opa-policies/warn/warn.rego', text: libraryResource('resources/policy/warn/warn.rego')
+    writeFile file: 'opa-policies/deny/deny.rego', text: libraryResource('policy/deny/deny.rego')
+    writeFile file: 'opa-policies/violation/violation.rego', text: libraryResource('policy/violation/violation.rego')
+    writeFile file: 'opa-policies/warn/warn.rego', text: libraryResource('policy/warn/warn.rego')
 
     echo "🔍 Running OPA policy check for Kubernetes manifests..."
     sh """
