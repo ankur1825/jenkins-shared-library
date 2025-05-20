@@ -1,12 +1,8 @@
 package kubernetes
 
-# Detect if input is from Gatekeeper (admission review)
 default is_gatekeeper := false
 
-is_gatekeeper {
-	has_field(input, "review")
-	has_field(input.review, "object")
-}
+is_gatekeeper := has_field(input, "review") && has_field(input.review, "object")
 
 object := input {
 	not is_gatekeeper
@@ -27,48 +23,34 @@ format(msg) := msg {
 name := object.metadata.name
 kind := object.kind
 
-is_service {
-	kind == "Service"
-}
+is_service := kind == "Service"
+is_deployment := kind == "Deployment"
+is_daemonset := kind == "DaemonSet"
+is_pod := kind == "Pod"
 
-is_deployment {
-	kind == "Deployment"
-}
-
-is_daemonset {
-	kind == "DaemonSet"
-}
-
-is_pod {
-	kind == "Pod"
-}
-
-# Image splitting logic — FIXED
-split_image(image) = [image, "latest"] {
+split_image(image) := [image, "latest"] {
 	not contains(image, ":")
 }
 
-split_image(image) = [image_name, tag] {
+split_image(image) := parts {
 	parts := split(image, ":")
 	count(parts) == 2
-	image_name := parts[0]
-	tag := parts[1]
 }
 
-pod_containers(pod) = all_containers {
+pod_containers(pod) := all_containers {
 	keys := {"containers", "initContainers"}
 	all_containers := [c | k := keys[_]; c := pod.spec[k][_]]
 }
 
 containers[container] {
 	pod := pods[_]
-	all_containers := pod_containers(pod)
-	container := all_containers[_]
+	all := pod_containers(pod)
+	container := all[_]
 }
 
 containers[container] {
-	all_containers := pod_containers(object)
-	container := all_containers[_]
+	all := pod_containers(object)
+	container := all[_]
 }
 
 pods[pod] {
@@ -88,7 +70,6 @@ pods[pod] {
 
 volumes[volume] {
 	pod := pods[_]
-	pod.spec.volumes
 	volume := pod.spec.volumes[_]
 }
 
@@ -106,84 +87,68 @@ has_field(obj, field) {
 
 no_read_only_filesystem(c) {
 	not has_field(c, "securityContext")
-}
-
-no_read_only_filesystem(c) {
+} else {
 	has_field(c, "securityContext")
 	not has_field(c.securityContext, "readOnlyRootFilesystem")
 }
 
 priviledge_escalation_allowed(c) {
 	not has_field(c, "securityContext")
-}
-
-priviledge_escalation_allowed(c) {
+} else {
 	has_field(c, "securityContext")
 	has_field(c.securityContext, "allowPrivilegeEscalation")
 }
 
-canonify_cpu(orig) = new {
+canonify_cpu(orig) := new {
 	is_number(orig)
 	new := orig * 1000
 }
 
-canonify_cpu(orig) = new {
-	not is_number(orig)
+canonify_cpu(orig) := new {
 	endswith(orig, "m")
 	new := to_number(replace(orig, "m", ""))
 }
 
-canonify_cpu(orig) = new {
-	not is_number(orig)
+canonify_cpu(orig) := new {
 	not endswith(orig, "m")
 	re_match("^[0-9]+$", orig)
 	new := to_number(orig) * 1000
 }
 
-mem_multiple("E") = 1000000000000000000000
-mem_multiple("P") = 1000000000000000000
-mem_multiple("T") = 1000000000000000
-mem_multiple("G") = 1000000000000
-mem_multiple("M") = 1000000000
-mem_multiple("k") = 1000000
-mem_multiple("") = 1000
-mem_multiple("m") = 1
-mem_multiple("Ki") = 1024000
-mem_multiple("Mi") = 1048576000
-mem_multiple("Gi") = 1073741824000
-mem_multiple("Ti") = 1099511627776000
-mem_multiple("Pi") = 1125899906842624000
-mem_multiple("Ei") = 1152921504606846976000
-
-get_suffix(mem) = suffix {
-	is_string(mem)
-	count(mem) > 1
-	sub := substring(mem, count(mem) - 2, -1)
-	mem_multiple(sub)
-	suffix := sub
+mem_multiple := {
+	"E": 1e21,
+	"P": 1e18,
+	"T": 1e15,
+	"G": 1e12,
+	"M": 1e9,
+	"k": 1e6,
+	"":  1e3,
+	"m": 1,
+	"Ki": 1024000,
+	"Mi": 1048576000,
+	"Gi": 1073741824000,
+	"Ti": 1099511627776000,
+	"Pi": 1125899906842624000,
+	"Ei": 1152921504606846976000,
 }
 
-get_suffix(mem) = suffix {
+get_suffix(mem) := suffix {
 	is_string(mem)
-	count(mem) > 0
-	sub := substring(mem, count(mem) - 1, -1)
-	mem_multiple(sub)
-	suffix := sub
+	suffixes := ["Ki", "Mi", "Gi", "Ti", "Pi", "Ei", "E", "P", "T", "G", "M", "k", "m", ""]
+	suffix := suffixes[_]
+	endswith(mem, suffix)
 }
 
-get_suffix(_) = ""
-
-canonify_mem(orig) = new {
+canonify_mem(orig) := new {
 	is_number(orig)
 	new := orig * 1000
 }
 
-canonify_mem(orig) = new {
-	not is_number(orig)
+canonify_mem(orig) := new {
 	suffix := get_suffix(orig)
 	raw := replace(orig, suffix, "")
 	re_match("^[0-9]+$", raw)
-	new := to_number(raw) * mem_multiple(suffix)
+	new := to_number(raw) * mem_multiple[suffix]
 }
 
 required_deployment_labels {
@@ -214,22 +179,23 @@ has_liveness_probe(container) {
 	not is_null(container.livenessProbe)
 }
 
-is_null(value) {
-	value == null
+is_null(x) {
+	x == null
 }
 
 has_secret_env_var(container) {
-	not is_null(container.env.secret)
+	some i
+	container.env[i].valueFrom.secretKeyRef
 }
 
-resolve_registry(image) = registry {
+resolve_registry(image) := registry {
 	parts := split(image, "/")
 	count(parts) > 1
 	is_possible_registry(parts[0])
 	registry := parts[0]
 }
 
-resolve_registry(_) = "unknown registry"
+resolve_registry(_) := "unknown registry"
 
 is_possible_registry(part) {
 	contains(part, ".")
