@@ -1,7 +1,5 @@
 package kubernetes
 
-import future.keywords
-
 default is_gatekeeper := false
 
 is_gatekeeper if {
@@ -29,21 +27,10 @@ format(msg) := msg if {
 name := object.metadata.name
 kind := object.kind
 
-is_service if {
-	kind == "Service"
-}
-
-is_deployment if {
-	kind == "Deployment"
-}
-
-is_daemonset if {
-	kind == "DaemonSet"
-}
-
-is_pod if {
-	kind == "Pod"
-}
+is_service if kind == "Service"
+is_deployment if kind == "Deployment"
+is_daemonset if kind == "DaemonSet"
+is_pod if kind == "Pod"
 
 split_image(image) := [image, "latest"] if {
 	not contains(image, ":")
@@ -58,11 +45,15 @@ split_image(image) := [image_name, tag] if {
 
 pod_containers(pod) := all_containers if {
 	keys := {"containers", "initContainers"}
-	all_containers := [c | k := keys[_]; pod.spec[k]; c := pod.spec[k][_]]
+	all_containers := [c |
+		k := keys[_]
+		c := pod.spec[k][_]
+	]
 }
 
 containers[container] if {
 	pod := pods[_]
+	is_object(pod)
 	all_containers := pod_containers(pod)
 	container := all_containers[_]
 }
@@ -87,12 +78,10 @@ pods[pod] if {
 	pod := object
 }
 
-volumes[volume] if {
-  pod := pods[_]
-  is_object(pod)
-  has_field(pod, "spec")
-  has_field(pod.spec, "volumes")
-  volume := pod.spec.volumes[_]
+volumes[volume] {
+	pod := pods[_]
+	is_object(pod)
+	volume := pod.spec.volumes[_]
 }
 
 dropped_capability(container, cap) if {
@@ -103,9 +92,7 @@ added_capability(container, cap) if {
 	container.securityContext.capabilities.add[_] == cap
 }
 
-has_field(obj, field) if {
-	obj[field]
-}
+has_field(obj, field) if obj[field]
 
 no_read_only_filesystem(c) if {
 	not has_field(c, "securityContext")
@@ -139,20 +126,20 @@ canonify_cpu(orig) := new if {
 	new := to_number(orig) * 1000
 }
 
-mem_multiple("E") := 1000000000000000000000 if true
-mem_multiple("P") := 1000000000000000000 if true
-mem_multiple("T") := 1000000000000000 if true
-mem_multiple("G") := 1000000000000 if true
-mem_multiple("M") := 1000000000 if true
-mem_multiple("k") := 1000000 if true
-mem_multiple("") := 1000 if true
-mem_multiple("m") := 1 if true
-mem_multiple("Ki") := 1024000 if true
-mem_multiple("Mi") := 1048576000 if true
-mem_multiple("Gi") := 1073741824000 if true
-mem_multiple("Ti") := 1099511627776000 if true
-mem_multiple("Pi") := 1125899906842624000 if true
-mem_multiple("Ei") := 1152921504606846976000 if true
+mem_multiple("E") := 1e21
+mem_multiple("P") := 1e18
+mem_multiple("T") := 1e15
+mem_multiple("G") := 1e12
+mem_multiple("M") := 1e9
+mem_multiple("k") := 1e6
+mem_multiple("") := 1e3
+mem_multiple("m") := 1
+mem_multiple("Ki") := 1024000
+mem_multiple("Mi") := 1048576000
+mem_multiple("Gi") := 1073741824000
+mem_multiple("Ti") := 1099511627776000
+mem_multiple("Pi") := 1125899906842624000
+mem_multiple("Ei") := 1152921504606846976000
 
 get_suffix(mem) := suffix if {
 	is_string(mem)
@@ -170,9 +157,7 @@ get_suffix(mem) := suffix if {
 	suffix := sub
 }
 
-get_suffix(_) := "" if {
-	true
-}
+get_suffix(_) := ""  # fallback
 
 canonify_mem(orig) := new if {
 	is_number(orig)
@@ -201,27 +186,18 @@ required_deployment_selectors if {
 	object.spec.selector.matchLabels["app.kubernetes.io/instance"]
 }
 
-workload_with_pod_template if {
-	is_deployment
-} else if {
-	is_daemonset
-}
+workload_with_pod_template if is_deployment
+workload_with_pod_template if is_daemonset
 
-has_readiness_probe(container) if {
-	not is_null(container.readinessProbe)
-}
+has_readiness_probe(container) if not is_null(container.readinessProbe)
+has_liveness_probe(container) if not is_null(container.livenessProbe)
 
-has_liveness_probe(container) if {
-	not is_null(container.livenessProbe)
-}
-
-is_null(value) if {
-	value == null
-}
+is_null(x) if x == null
+is_object(x) if type_name(x) == "object"
 
 has_secret_env_var(container) if {
-	some i
-	container.env[i].valueFrom.secretKeyRef
+	env := container.env[_]
+	env.valueFrom.secretKeyRef
 }
 
 resolve_registry(image) := registry if {
@@ -231,24 +207,13 @@ resolve_registry(image) := registry if {
 	registry := parts[0]
 }
 
-resolve_registry(_) := "unknown registry" if {
-	true
-}
+resolve_registry(_) := "unknown registry"
 
-is_possible_registry(part) if {
-	contains(part, ".")
-} else if {
-	part == "localhost"
-} else if {
-	contains(part, ":")
-}
+is_possible_registry(part) if contains(part, ".")
+is_possible_registry(part) if part == "localhost"
+is_possible_registry(part) if contains(part, ":")
 
-known_registry(registry) if {
-	registry == trusted_registries[_]
-}
+known_registry(registry) if registry == trusted_registries[_]
+trusted_registries := {}
 
-trusted_registries := {"docker.io", "quay.io", "ghcr.io", "public.ecr.aws"}
-
-pod_replicas_lt_or_equal_one(replicas) if {
-	replicas <= 1
-}
+pod_replicas_lt_or_equal_one(replicas) if replicas <= 1
