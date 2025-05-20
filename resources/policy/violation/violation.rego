@@ -1,15 +1,15 @@
-package violation
+package main
 
 import data.kubernetes
 
 violation[msg] if {
     container := kubernetes.containers[_]
-    not container.readinessProbe
-    msg := sprintf("Container '%s' is missing a readinessProbe", [container.name])
+    split(container.image, ":")[1] == "latest"
+    msg := sprintf("Container '%s' is using the 'latest' image tag", [container.name])
 }
 
 violation[msg] if {
     container := kubernetes.containers[_]
     not container.livenessProbe
-    msg := sprintf("Container '%s' is missing a livenessProbe", [container.name])
+    msg := sprintf("Container '%s' does not have a livenessProbe", [container.name])
 }
