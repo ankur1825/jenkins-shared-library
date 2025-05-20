@@ -4,6 +4,6 @@ object := input
 
 containers := [c | object.spec.template.spec.containers[_] == c]
 
-has_label(key) = result {
-    result := object.metadata.labels[key]
+has_label(result) if {
+    result := object.metadata.labels["app"]
 }

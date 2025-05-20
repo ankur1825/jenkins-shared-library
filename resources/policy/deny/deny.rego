@@ -3,7 +3,7 @@ package deny
 import data.kubernetes
 
 deny[msg] if {
-    not kubernetes.has_label("app")
+    not kubernetes.has_app_label
     msg := "Missing required label: app"
 }
 
