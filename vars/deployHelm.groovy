@@ -51,7 +51,7 @@ def call(Map params = [:]) {
     sh 'mkdir -p opa-policies/deny opa-policies/violation opa-policies/warn'
 
     writeFile file: 'opa-policies/deny/deny.rego', text: libraryResource('policy/deny/deny.rego')
-    writeFile file: 'opa-policies/deny/deny.rego', text: libraryResource('policy/helpers/kubernetes.rego')
+    writeFile file: 'opa-policies/helpers/kubernetes.rego', text: libraryResource('policy/helpers/kubernetes.rego')
     writeFile file: 'opa-policies/violation/violation.rego', text: libraryResource('policy/violation/violation.rego')
     writeFile file: 'opa-policies/warn/warn.rego', text: libraryResource('policy/warn/warn.rego')
 
