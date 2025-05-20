@@ -13,8 +13,15 @@ is_deployment if kind == "Deployment"
 is_pod if kind == "Pod"
 
 # Container access for both Pod and Deployment
-#containers[c] if object.spec.template.spec.containers[_] == c
-#containers[c] if object.spec.containers[_] == c
+containers[c] if {
+    some i
+    c := object.spec.template.spec.containers[i]
+}
+
+containers[c] if {
+    some i
+    c := object.spec.containers[i]
+}
 
 # Probes
 has_readiness_probe(c) if c.readinessProbe
