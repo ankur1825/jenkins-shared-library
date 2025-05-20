@@ -2,12 +2,18 @@ package kubernetes
 
 object := input
 
-containers := [c | object.spec.template.spec.containers[_] == c]
+# Safely generate containers list using generator expression
+containers[c] {
+    some i
+    c := object.spec.template.spec.containers[i]
+}
 
-has_label(key) if {
+# Check if a specific label key exists
+has_label(key) {
     object.metadata.labels[key]
 }
 
-get_label(key) := val if {
+# Return the value of a label by key
+get_label(key) := val {
     val := object.metadata.labels[key]
 }
