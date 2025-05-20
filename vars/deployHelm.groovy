@@ -63,13 +63,14 @@ def call(Map params = [:]) {
         helm template ${helmChartDir} > rendered.yaml
         conftest test rendered.yaml -p opa-policies --output json > opa-k8s-result.json
     """
+    sh "cat opa-k8s-result.json"
 
     // Ensure result is not empty
     if (!fileExists('opa-k8s-result.json') || readFile('opa-k8s-result.json').trim() == '') {
         error("❌ OPA policy scan output is empty or missing. Please check Rego rules.")
     }
 
-    sh "cat opa-k8s-result.json"
+    //sh "cat opa-k8s-result.json"
 
     def opaResult = readJSON file: 'opa-k8s-result.json'
     def violations = []
