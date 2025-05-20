@@ -1,10 +1,9 @@
 package kubernetes
 
-default object := input
-
 # Return all containers in a Deployment or Pod
 containers := [c | 
     some i
+	obj := input
     c := object.spec.template.spec.containers[i]
 ]
 
