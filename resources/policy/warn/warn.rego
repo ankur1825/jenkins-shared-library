@@ -2,28 +2,21 @@ package main
 
 import data.kubernetes
 
-name := input.metadata.name
-
-# https://learnk8s.io/production-best-practices#application-development
-warn[msg] {
-  	kubernetes.is_deployment
-  	kubernetes.containers[container]
-  	container.serviceAccount.automount == true
-  	msg := kubernetes.format(sprintf("Please note that %s in the %s %s has the default ServiceAccount automatically mounted into the file system of all Pods. You might want to disable that and provide more granular policies.", [container.name, kubernetes.kind, kubernetes.name]))
+warn[msg] if {
+  kubernetes.is_deployment
+  not input.spec.template.spec.automountServiceAccountToken == false
+  msg := kubernetes.format(sprintf("Deployment %s: automountServiceAccountToken is not disabled. Consider setting it to false to avoid unnecessary token exposure.", [kubernetes.name]))
 }
 
-# https://learnk8s.io/production-best-practices#application-development
-warn[msg] {
-	kubernetes.is_deployment
-  	kubernetes.containers[container]
-	container.has_secret_env_var
-  	msg := kubernetes.format(sprintf("For %s in the %s %s, please ensure Secret resources are mounted into containers as volumes rather than passed in as environment variables.", [container.name, kubernetes.kind, kubernetes.name]))
+warn[msg] if {
+  kubernetes.containers[container]
+  some env
+  container.env[env].valueFrom.secretKeyRef
+  msg := kubernetes.format(sprintf("Container %s in deployment %s references a secret as an environment variable. Mount secrets as volumes for better security.", [container.name, kubernetes.name]))
 }
 
-# https://learnk8s.io/production-best-practices#application-development
-warn[msg] {
-	kubernetes.is_deployment
-  	kubernetes.containers[container]
-	not container.autoscaler.enabled
-  	msg := kubernetes.format(sprintf("For %s in the %s %s, if you are expecting varying workloads, please consider using an autoscaler", [container.name, kubernetes.kind, kubernetes.name]))
+warn[msg] if {
+  kubernetes.is_deployment
+  not input.metadata.annotations["autoscaling.alpha.kubernetes.io/minReplicas"]
+  msg := kubernetes.format(sprintf("Deployment %s does not define autoscaling annotations. Consider enabling HPA (Horizontal Pod Autoscaler) for workload flexibility.", [kubernetes.name]))
 }
