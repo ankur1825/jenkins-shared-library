@@ -89,7 +89,7 @@ pods[pod] if {
 volumes[volume] if {
 	some pod
 	pods[pod]
-	has_field(pod.spec, "volumes")
+	pod.spec.volumes
 	volume := pod.spec.volumes[_]
 }
 
