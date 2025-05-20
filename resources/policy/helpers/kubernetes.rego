@@ -87,7 +87,8 @@ pods[pod] if {
 }
 
 volumes[volume] if {
-	pod := pods[_]
+	some i
+	pod := pods[i]
 	volume := pod.spec.volumes[_]
 }
 
