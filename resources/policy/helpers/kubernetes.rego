@@ -12,12 +12,13 @@ kind := object.kind
 is_deployment if kind == "Deployment"
 is_pod if kind == "Pod"
 
-# Container access for both Pod and Deployment
+# # Handles Deployment, DaemonSet, StatefulSet, etc.
 containers[c] if {
     some i
     c := object.spec.template.spec.containers[i]
 }
 
+# Handles Pod
 containers[c] if {
     some i
     c := object.spec.containers[i]
