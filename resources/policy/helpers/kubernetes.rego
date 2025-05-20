@@ -70,10 +70,11 @@ pods[pod] if {
 }
 
 # Volumes used
-volumes[volume] if {
-    pod := pods[_]
-	has_field(pod.spec, "volumes")
-    volume := pod.spec.volumes[_]
+volumes[volume] {
+  pod := pods[_]
+  has_field(pod, "spec")
+  has_field(pod.spec, "volumes")
+  volume := pod.spec.volumes[_]
 }
 
 # Capability helpers
