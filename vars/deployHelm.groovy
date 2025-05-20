@@ -47,10 +47,17 @@ def call(Map params = [:]) {
         writeFile file: "${helmChartDir}/templates/ingress.yaml", text: libraryResource('Helm-chart/templates/ingress.yaml')
     }
 
+    // Write policy folders into workspace so conftest can access
+    sh 'mkdir -p opa-policies/deny opa-policies/violation opa-policies/warn'
+
+    writeFile file: 'opa-policies/deny/deny.rego', text: libraryResource('resources/policy/deny/deny.rego')
+    writeFile file: 'opa-policies/violation/violation.rego', text: libraryResource('resources/policy/violation/violation.rego')
+    writeFile file: 'opa-policies/warn/warn.rego', text: libraryResource('resources/policy/warn/warn.rego')
+
     echo "🔍 Running OPA policy check for Kubernetes manifests..."
     sh """
         helm template ${helmChartDir} > rendered.yaml
-        conftest test rendered.yaml -p jenkins-shared-library/resources/policy --output json > opa-k8s-result.json
+        conftest test rendered.yaml -p opa-policies --output json > opa-k8s-result.json
     """
 
     def opaResult = readJSON file: 'opa-k8s-result.json'
