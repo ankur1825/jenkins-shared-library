@@ -2,9 +2,10 @@ package kubernetes
 
 # Return all containers in a Deployment or Pod
 containers := [c | 
+    obj := input
+    containers := obj.spec.template.spec.containers
     some i
-	obj := input
-    c := object.spec.template.spec.containers[i]
+    c := containers[i]
 ]
 
 # Check if label key exists
