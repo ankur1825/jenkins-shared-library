@@ -2,8 +2,8 @@ package kubernetes
 
 object := input
 
-containers := [c | c := object.spec.template.spec.containers[_]]
+containers := [c | object.spec.template.spec.containers[_] == c]
 
-has_label(key) := true {
-    object.metadata.labels[key]
+has_label(key) = result {
+    result := object.metadata.labels[key]
 }
