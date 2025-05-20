@@ -47,10 +47,9 @@ def call(Map params = [:]) {
         writeFile file: "${helmChartDir}/templates/ingress.yaml", text: libraryResource('Helm-chart/templates/ingress.yaml')
     }
 
-    // Run OPA Conftest Evaluation
+    // 📦 OPA Scan - Kubernetes Rego
     echo "🔍 Running OPA policy check for Kubernetes manifests..."
 
-    // Write policy folders into workspace so conftest can access
     sh 'mkdir -p opa-policies/helpers opa-policies/deny opa-policies/violation opa-policies/warn'
 
     writeFile file: 'opa-policies/deny/deny.rego', text: libraryResource('policy/deny/deny.rego')
@@ -58,19 +57,15 @@ def call(Map params = [:]) {
     writeFile file: 'opa-policies/violation/violation.rego', text: libraryResource('policy/violation/violation.rego')
     writeFile file: 'opa-policies/warn/warn.rego', text: libraryResource('policy/warn/warn.rego')
 
-
+    // Ignore exit code for conftest, handle manually
     sh """
         helm template ${helmChartDir} > rendered.yaml
-        conftest test rendered.yaml -p ./opa-policies --output json > opa-k8s-result.json
-        cat opa-k8s-result.json
+        conftest test rendered.yaml -p ./opa-policies --output json > opa-k8s-result.json || true
     """
 
-    // Ensure result is not empty
     if (!fileExists('opa-k8s-result.json') || readFile('opa-k8s-result.json').trim() == '') {
-        error("❌ OPA policy scan output is empty or missing. Please check Rego rules.")
+        error("❌ OPA policy scan output is empty or failed to parse.")
     }
-
-    sh "cat opa-k8s-result.json"
 
     def opaResult = readJSON file: 'opa-k8s-result.json'
     def violations = []
@@ -123,5 +118,5 @@ def call(Map params = [:]) {
         fi
     """
 
-    echo "Helm deployment completed."
+    echo "🚀 Helm deployment completed successfully."
 }
