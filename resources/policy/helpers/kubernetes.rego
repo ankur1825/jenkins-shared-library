@@ -72,6 +72,7 @@ pods[pod] if {
 # Volumes used
 volumes[volume] if {
     pod := pods[_]
+	has_field(pod.spec, "volumes")
     volume := pod.spec.volumes[_]
 }
 
