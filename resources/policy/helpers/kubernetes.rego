@@ -2,7 +2,10 @@ package kubernetes
 
 default is_gatekeeper := false
 
-is_gatekeeper := has_field(input, "review") && has_field(input.review, "object")
+is_gatekeeper {
+    has_field(input, "review")
+    has_field(input.review, "object")
+}
 
 object := input {
 	not is_gatekeeper
