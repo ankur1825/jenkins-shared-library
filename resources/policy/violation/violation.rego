@@ -1,6 +1,6 @@
 package main
 
-violation[msg] {
+violation contains msg if {
     container := input.spec.template.spec.containers[_]
     split(container.image, ":")[1] == "latest"
     msg := sprintf("%s is using the latest image tag", [container.name])
