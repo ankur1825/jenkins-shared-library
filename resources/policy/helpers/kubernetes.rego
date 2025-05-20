@@ -10,10 +10,14 @@ containers := [c |
 
 # Check if label key exists
 has_label(key) if {
-    object.metadata.labels[key]
+    obj := input
+    labels := obj.metadata.labels
+    labels[key]
 }
 
 # Get label value
 get_label(key) := val if {
-    val := object.metadata.labels[key]
+    obj := input
+    labels := obj.metadata.labels
+    val := labels[key]
 }
