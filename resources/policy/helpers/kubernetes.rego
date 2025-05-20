@@ -88,9 +88,9 @@ pods[pod] if {
 }
 
 volumes[volume] if {
-	pod := pods[_]
-	pod.spec.volumes
-	volume := pod.spec.volumes[_]
+  pod := pods[_]
+  has_field(pod.spec, "volumes")
+  volume := pod.spec.volumes[_]
 }
 
 dropped_capability(container, cap) if {
