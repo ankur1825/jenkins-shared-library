@@ -3,7 +3,7 @@ package main
 import data.kubernetes
 
 name := input.metadata.name
-kind := input.metadata.kind
+kind := input.kind
 
 deny[msg] if {
     kubernetes.is_deployment
@@ -28,6 +28,22 @@ deny[msg] if {
     not input.spec.template.spec.serviceAccountName
     msg := sprintf("%s must specify a serviceAccountName in the template", [kind])
 }
+
+# Deny containers running as root
+deny[msg] if {
+    kubernetes.containers[container]
+    not container.securityContext.runAsNonRoot
+    msg := sprintf("Container %s in %s must not run as root. Set 'runAsNonRoot: true'", [container.name, name])
+}
+
+# Deny use of latest tag
+deny[msg] if {
+    kubernetes.containers[container]
+    [image_name, tag] := split(container.image, ":")
+    tag == "latest"
+    msg := sprintf("Container %s in %s is using the 'latest' image tag: %s", [container.name, name, tag])
+}
+
 
 # Optional: Uncomment and update as needed
 # deny[msg] if {
