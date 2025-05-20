@@ -1,14 +1,14 @@
-package main
+package deny
+
 import data.kubernetes
 
 deny[msg] {
-  input.kind == "Deployment"
-  not input.spec.template.spec.serviceAccountName
-  msg := sprintf("%s %s has no serviceAccountName set", [kubernetes.kind, kubernetes.name])
+    not kubernetes.has_label("app")
+    msg := "Missing required label: app"
 }
 
 deny[msg] {
-  input.kind == "Deployment"
-  not input.spec.selector.matchLabels["app"]
-  msg := sprintf("%s %s is missing 'app' selector label", [kubernetes.kind, kubernetes.name])
+    container := kubernetes.containers[_]
+    not container.resources
+    msg := sprintf("Container '%s' has no resource limits defined", [container.name])
 }

@@ -1,9 +1,9 @@
-package main
+package warn
+
 import data.kubernetes
 
 warn[msg] {
-  container := kubernetes.containers[_]
-  some i
-  container.env[i].valueFrom.secretKeyRef
-  msg := sprintf("Container %s in %s %s has secrets as env vars", [container.name, kubernetes.kind, kubernetes.name])
+    container := kubernetes.containers[_]
+    container.image == "nginx:latest"
+    msg := sprintf("Container '%s' is using a potentially unstable image tag 'latest'", [container.name])
 }
