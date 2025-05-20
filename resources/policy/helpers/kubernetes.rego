@@ -1,38 +1,27 @@
 package kubernetes
 
-# Select the object depending on whether Gatekeeper-style input exists
-object := input.review.object if input.review
-object := input if not input.review
-
-# Resource metadata
-name := object.metadata.name
-kind := object.kind
-
-# Kinds
-is_deployment if kind == "Deployment"
-is_pod if kind == "Pod"
-
-# # Handles Deployment, DaemonSet, StatefulSet, etc.
-containers[c] if {
-    some i
-    c := object.spec.template.spec.containers[i]
+# Support for both Pod and Deployment
+containers[c] {
+  input.kind == "Deployment"
+  c := input.spec.template.spec.containers[_]
 }
 
-# Handles Pod
-containers[c] if {
-    some i
-    c := object.spec.containers[i]
+containers[c] {
+  input.kind == "Pod"
+  c := input.spec.containers[_]
 }
 
-# Probes
-has_readiness_probe(c) if c.readinessProbe
-has_liveness_probe(c) if c.livenessProbe
-
-# Image tag split
-split_image(image) := parts if {
+# Extract image tag
+image_tag(image) = tag {
   parts := split(image, ":")
+  count(parts) == 2
+  tag := parts[1]
 }
 
-# Format message for Gatekeeper or raw Conftest
-format(msg) := {"msg": msg} if input.review
-format(msg) := msg if not input.review
+image_tag(image) = "latest" {
+  not contains(image, ":")
+}
+
+# Get name and kind
+name := input.metadata.name
+kind := input.kind
