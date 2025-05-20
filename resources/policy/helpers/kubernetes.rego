@@ -89,6 +89,7 @@ pods[pod] if {
 
 volumes[volume] if {
   pod := pods[_]
+  is_object(pod)
   has_field(pod, "spec")
   has_field(pod.spec, "volumes")
   volume := pod.spec.volumes[_]
