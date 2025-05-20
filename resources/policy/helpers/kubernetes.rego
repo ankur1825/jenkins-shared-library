@@ -1,22 +1,18 @@
 package kubernetes
 
-# Select object for conftest vs gatekeeper
-object = input {
-  not input.review
-}
+# Select the object depending on whether Gatekeeper-style input exists
+object := input.review.object if input.review
+object := input if not input.review
 
-object = input.review.object {
-  input.review
-}
+# Resource metadata
+name := object.metadata.name
+kind := object.kind
 
-# Helpers
-name = object.metadata.name
-kind = object.kind
-
+# Kinds
 is_deployment if kind == "Deployment"
 is_pod if kind == "Pod"
 
-# Iterate over containers
+# Container access for both Pod and Deployment
 containers[c] if object.spec.template.spec.containers[_] == c
 containers[c] if object.spec.containers[_] == c
 
@@ -24,16 +20,11 @@ containers[c] if object.spec.containers[_] == c
 has_readiness_probe(c) if c.readinessProbe
 has_liveness_probe(c) if c.livenessProbe
 
-# Image tag parser
-split_image(image) = parts {
+# Image tag split
+split_image(image) := parts if {
   parts := split(image, ":")
 }
 
-# Format message
-format(msg) = {"msg": msg} {
-  input.review
-}
-
-format(msg) = msg {
-  not input.review
-}
+# Format message for Gatekeeper or raw Conftest
+format(msg) := {"msg": msg} if input.review
+format(msg) := msg if not input.review
