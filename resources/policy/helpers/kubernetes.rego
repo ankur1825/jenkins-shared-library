@@ -43,12 +43,16 @@ is_pod if {
 	kind == "Pod"
 }
 
-split_image(image) := [image, "latest"] if {
+# ✅ FIXED: Safe image splitting
+split_image(image) := result if {
 	not contains(image, ":")
+	result := [image, "latest"]
 }
 
-split_image(image) := [image_name, tag] if {
-	split(image, ":") == [image_name, tag]
+split_image(image) := result if {
+	parts := split(image, ":")
+	count(parts) == 2
+	result := parts
 }
 
 pod_containers(pod) := all_containers if {
@@ -135,20 +139,21 @@ canonify_cpu(orig) := new if {
 	new := to_number(orig) * 1000
 }
 
-mem_multiple("E") := 1000000000000000000000
-mem_multiple("P") := 1000000000000000000
-mem_multiple("T") := 1000000000000000
-mem_multiple("G") := 1000000000000
-mem_multiple("M") := 1000000000
-mem_multiple("k") := 1000000
-mem_multiple("") := 1000
+# Memory unit mapping
+mem_multiple("E") := 1e21
+mem_multiple("P") := 1e18
+mem_multiple("T") := 1e15
+mem_multiple("G") := 1e12
+mem_multiple("M") := 1e9
+mem_multiple("k") := 1e6
+mem_multiple("") := 1e3
 mem_multiple("m") := 1
-mem_multiple("Ki") := 1024000
-mem_multiple("Mi") := 1048576000
-mem_multiple("Gi") := 1073741824000
-mem_multiple("Ti") := 1099511627776000
-mem_multiple("Pi") := 1125899906842624000
-mem_multiple("Ei") := 1152921504606846976000
+mem_multiple("Ki") := 1024 * 1e3
+mem_multiple("Mi") := 1024 * 1024 * 1e3
+mem_multiple("Gi") := 1024 * 1024 * 1024 * 1e3
+mem_multiple("Ti") := 1024 * 1024 * 1024 * 1024 * 1e3
+mem_multiple("Pi") := 1024 * 1024 * 1024 * 1024 * 1024 * 1e3
+mem_multiple("Ei") := 1024 * 1024 * 1024 * 1024 * 1024 * 1024 * 1e3
 
 get_suffix(mem) := suffix if {
 	is_string(mem)
@@ -166,7 +171,7 @@ get_suffix(mem) := suffix if {
 	suffix := sub
 }
 
-get_suffix(_) := ""  # Default fallback
+get_suffix(_) := ""  # fallback
 
 canonify_mem(orig) := new if {
 	is_number(orig)
@@ -214,7 +219,7 @@ is_null(value) if {
 }
 
 has_secret_env_var(container) if {
-	not is_null(container.env.secret)
+	container.env[_].valueFrom.secretKeyRef
 }
 
 resolve_registry(image) := registry if {
@@ -238,7 +243,11 @@ known_registry(registry) if {
 	registry == trusted_registries[_]
 }
 
-trusted_registries := {}
+trusted_registries := {
+	"docker.io",
+	"quay.io",
+	"public.ecr.aws"
+}
 
 pod_replicas_lt_or_equal_one(replicas) if {
 	replicas <= 1
