@@ -1,7 +1,6 @@
 package kubernetes
 
 import future.keywords
-import future.builtins
 
 default is_gatekeeper := false
 
