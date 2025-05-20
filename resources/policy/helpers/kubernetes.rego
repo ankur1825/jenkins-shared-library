@@ -46,16 +46,15 @@ is_pod if {
 	kind == "Pod"
 }
 
-# ✅ FIXED: Safe image splitting
-split_image(image) := result if {
+split_image(image) := [image, "latest"] if {
 	not contains(image, ":")
-	result := [image, "latest"]
 }
 
-split_image(image) := result if {
+split_image(image) := [image_name, tag] if {
+	count(split(image, ":")) == 2
 	parts := split(image, ":")
-	count(parts) == 2
-	result := parts
+	image_name := parts[0]
+	tag := parts[1]
 }
 
 pod_containers(pod) := all_containers if {
@@ -90,9 +89,8 @@ pods[pod] if {
 }
 
 volumes[volume] if {
-	some pod
-	pods[pod]
-	has_field(pod.spec, "volumes")
+	pod := pods[_]
+	pod.spec.volumes
 	volume := pod.spec.volumes[_]
 }
 
@@ -110,18 +108,14 @@ has_field(obj, field) if {
 
 no_read_only_filesystem(c) if {
 	not has_field(c, "securityContext")
-}
-
-no_read_only_filesystem(c) if {
+} else if {
 	has_field(c, "securityContext")
 	not has_field(c.securityContext, "readOnlyRootFilesystem")
 }
 
 priviledge_escalation_allowed(c) if {
 	not has_field(c, "securityContext")
-}
-
-priviledge_escalation_allowed(c) if {
+} else if {
 	has_field(c, "securityContext")
 	has_field(c.securityContext, "allowPrivilegeEscalation")
 }
@@ -129,36 +123,31 @@ priviledge_escalation_allowed(c) if {
 canonify_cpu(orig) := new if {
 	is_number(orig)
 	new := orig * 1000
-}
-
-canonify_cpu(orig) := new if {
+} else if {
 	not is_number(orig)
 	endswith(orig, "m")
 	new := to_number(replace(orig, "m", ""))
-}
-
-canonify_cpu(orig) := new if {
+} else if {
 	not is_number(orig)
 	not endswith(orig, "m")
 	regex.match("^[0-9]+$", orig)
 	new := to_number(orig) * 1000
 }
 
-# Memory unit mapping
-mem_multiple("E") := 1e21
-mem_multiple("P") := 1e18
-mem_multiple("T") := 1e15
-mem_multiple("G") := 1e12
-mem_multiple("M") := 1e9
-mem_multiple("k") := 1e6
-mem_multiple("") := 1e3
+mem_multiple("E") := 1000000000000000000000
+mem_multiple("P") := 1000000000000000000
+mem_multiple("T") := 1000000000000000
+mem_multiple("G") := 1000000000000
+mem_multiple("M") := 1000000000
+mem_multiple("k") := 1000000
+mem_multiple("") := 1000
 mem_multiple("m") := 1
-mem_multiple("Ki") := 1024 * 1e3
-mem_multiple("Mi") := 1024 * 1024 * 1e3
-mem_multiple("Gi") := 1024 * 1024 * 1024 * 1e3
-mem_multiple("Ti") := 1024 * 1024 * 1024 * 1024 * 1e3
-mem_multiple("Pi") := 1024 * 1024 * 1024 * 1024 * 1024 * 1e3
-mem_multiple("Ei") := 1024 * 1024 * 1024 * 1024 * 1024 * 1024 * 1e3
+mem_multiple("Ki") := 1024000
+mem_multiple("Mi") := 1048576000
+mem_multiple("Gi") := 1073741824000
+mem_multiple("Ti") := 1099511627776000
+mem_multiple("Pi") := 1125899906842624000
+mem_multiple("Ei") := 1152921504606846976000
 
 get_suffix(mem) := suffix if {
 	is_string(mem)
@@ -166,24 +155,20 @@ get_suffix(mem) := suffix if {
 	sub := substring(mem, count(mem) - 2, -1)
 	mem_multiple(sub)
 	suffix := sub
-}
-
-get_suffix(mem) := suffix if {
+} else if {
 	is_string(mem)
 	count(mem) > 0
 	sub := substring(mem, count(mem) - 1, -1)
 	mem_multiple(sub)
 	suffix := sub
+} else {
+	suffix := ""
 }
-
-get_suffix(_) := ""  # fallback
 
 canonify_mem(orig) := new if {
 	is_number(orig)
 	new := orig * 1000
-}
-
-canonify_mem(orig) := new if {
+} else if {
 	not is_number(orig)
 	suffix := get_suffix(orig)
 	raw := replace(orig, suffix, "")
@@ -219,12 +204,13 @@ has_liveness_probe(container) if {
 	not is_null(container.livenessProbe)
 }
 
-is_null(value) if {
-	value == null
+is_null(x) if {
+	x == null
 }
 
 has_secret_env_var(container) if {
-	container.env[_].valueFrom.secretKeyRef
+	some i
+	container.env[i].valueFrom.secretKeyRef
 }
 
 resolve_registry(image) := registry if {
@@ -232,9 +218,7 @@ resolve_registry(image) := registry if {
 	count(parts) > 1
 	is_possible_registry(parts[0])
 	registry := parts[0]
-}
-
-resolve_registry(_) := "unknown registry"
+} else := "unknown registry"
 
 is_possible_registry(part) if {
 	contains(part, ".")
@@ -248,11 +232,7 @@ known_registry(registry) if {
 	registry == trusted_registries[_]
 }
 
-trusted_registries := {
-	"docker.io",
-	"quay.io",
-	"public.ecr.aws"
-}
+trusted_registries := {}
 
 pod_replicas_lt_or_equal_one(replicas) if {
 	replicas <= 1
