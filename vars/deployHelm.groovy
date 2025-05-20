@@ -47,19 +47,29 @@ def call(Map params = [:]) {
         writeFile file: "${helmChartDir}/templates/ingress.yaml", text: libraryResource('Helm-chart/templates/ingress.yaml')
     }
 
+    // Run OPA Conftest Evaluation
+    echo "🔍 Running OPA policy check for Kubernetes manifests..."
+
     // Write policy folders into workspace so conftest can access
-    sh 'mkdir -p opa-policies/deny opa-policies/violation opa-policies/warn'
+    sh 'mkdir -p opa-policies/helpers opa-policies/deny opa-policies/violation opa-policies/warn'
 
     writeFile file: 'opa-policies/deny/deny.rego', text: libraryResource('policy/deny/deny.rego')
     writeFile file: 'opa-policies/helpers/kubernetes.rego', text: libraryResource('policy/helpers/kubernetes.rego')
     writeFile file: 'opa-policies/violation/violation.rego', text: libraryResource('policy/violation/violation.rego')
     writeFile file: 'opa-policies/warn/warn.rego', text: libraryResource('policy/warn/warn.rego')
 
-    echo "🔍 Running OPA policy check for Kubernetes manifests..."
+
     sh """
         helm template ${helmChartDir} > rendered.yaml
         conftest test rendered.yaml -p opa-policies --output json > opa-k8s-result.json
     """
+
+    // Ensure result is not empty
+    if (!fileExists('opa-k8s-result.json') || readFile('opa-k8s-result.json').trim() == '') {
+        error("❌ OPA policy scan output is empty or missing. Please check Rego rules.")
+    }
+
+    sh "cat opa-k8s-result.json"
 
     def opaResult = readJSON file: 'opa-k8s-result.json'
     def violations = []
