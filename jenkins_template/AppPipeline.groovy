@@ -51,12 +51,27 @@ def run(Map params) {
                 stage('Static Code Analysis') {
                     echo "Running SonarQube analysis..."
                     def scannerHome = tool 'SONAR-SCANNER'
+
+                    if (!fileExists('sonar-project.properties')) {
+                        error "sonar-project.properties not found in the repository!"
+                    }
+                    // Extract sonar.projectKey and fail if missing or empty
+                    def sonarProjectKey = sh(
+                        script: "grep '^sonar.projectKey=' sonar-project.properties | cut -d'=' -f2",
+                        returnStdout: true
+                    ).trim()
+                    if (!sonarProjectKey) {
+                        error "sonar.projectKey not found or empty in sonar-project.properties!"
+                    }
+                    echo "Detected Sonar Project Key: ${sonarProjectKey}"
+
                     withSonarQubeEnv('sonarqube') {
                       withCredentials([string(credentialsId: 'sonarqube-token', variable: 'SONAR_TOKEN')]) {
                             sh """
                                 ${scannerHome}/bin/sonar-scanner \
-                                -Dsonar.projectKey=webserice-application \
-                                -Dsonar.projectName=webserice-application \
+                                -Dproject.settings=sonar-project.properties \
+                                #-Dsonar.projectKey=webserice-application \
+                                #-Dsonar.projectName=webserice-application \
                                 -Dsonar.host.url=https://horizonrelevance.com/sonarqube 
                             """
                       }
@@ -64,6 +79,13 @@ def run(Map params) {
                     timeout(time:2, unit:'MINUTES'){
                         script{
                             waitForQualityGate abortPipeline: true
+                        }
+                    }
+
+                    // AI Post-Processing & Push to Backend
+                    script {
+                        withCredentials([string(credentialsId: 'sonarqube-token', variable: 'SONAR_TOKEN')]) {
+                            postProcessSonar(sonarProjectKey, SONAR_TOKEN)
                         }
                     }
                 }
@@ -112,8 +134,6 @@ def run(Map params) {
             } else {
                 echo "Skipping OPA Evaluation as it is disabled."
             }
-
-
 
 
             stage('Build Docker Image') {

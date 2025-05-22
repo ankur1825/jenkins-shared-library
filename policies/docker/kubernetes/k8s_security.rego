@@ -1,31 +1,31 @@
 package kubernetes.security
 
-default allow = true
-default deny = []
+default allow := true
 
-# Deny pods with privileged escalation
 deny[msg] {
-  input.spec.containers[_].securityContext.privileged == true
-  msg := "Privileged container found. High security risk."
-}
-
-# Deny containers running as root
-deny[msg] {
-  input.spec.containers[_].securityContext.runAsUser == 0
-  msg := "Container running as root user (UID 0). Critical risk."
-}
-
-# Deny deployments missing resource limits
-deny[msg] {
-  not input.spec.containers[_].resources.limits.cpu
-  msg := "Container missing CPU resource limit. Best practice violation."
+    some i
+    input.spec.containers[i].securityContext.privileged == true
+    msg := "Privileged container found. High security risk."
 }
 
 deny[msg] {
-  not input.spec.containers[_].resources.limits.memory
-  msg := "Container missing Memory resource limit. Best practice violation."
+    some i
+    input.spec.containers[i].securityContext.runAsUser == 0
+    msg := "Container running as root user (UID 0). Critical risk."
+}
+
+deny[msg] {
+    some i
+    not input.spec.containers[i].resources.limits.cpu
+    msg := sprintf("Container %d is missing CPU resource limit. Best practice violation.", [i])
+}
+
+deny[msg] {
+    some i
+    not input.spec.containers[i].resources.limits.memory
+    msg := sprintf("Container %d is missing Memory resource limit. Best practice violation.", [i])
 }
 
 allow {
-  not deny
+    not deny
 }
