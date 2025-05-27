@@ -1,4 +1,4 @@
-def call() {
+def call(Map params) {
     def credentialsId = params.CREDENTIALS_ID
     def appType = params.APP_TYPE
     def repoUrl = params.REPO_URL
