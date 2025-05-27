@@ -48,52 +48,56 @@ def call(Map params = [:]) {
     }
 
     // 📦 OPA Scan - Kubernetes Rego
-    echo "🔍 Running OPA policy check for Kubernetes manifests..."
+    if (params.ENABLE_OPA?.toBoolean()) {
+        echo "🔍 Running OPA policy check for Kubernetes manifests..."
 
-    sh 'mkdir -p opa-policies/helpers opa-policies/deny opa-policies/violation opa-policies/warn'
+        sh 'mkdir -p opa-policies/helpers opa-policies/deny opa-policies/violation opa-policies/warn'
 
-    writeFile file: 'opa-policies/deny/deny.rego', text: libraryResource('policy/deny/deny.rego')
-    writeFile file: 'opa-policies/helpers/kubernetes.rego', text: libraryResource('policy/helpers/kubernetes.rego')
-    writeFile file: 'opa-policies/violation/violation.rego', text: libraryResource('policy/violation/violation.rego')
-    writeFile file: 'opa-policies/warn/warn.rego', text: libraryResource('policy/warn/warn.rego')
+        writeFile file: 'opa-policies/deny/deny.rego', text: libraryResource('policy/deny/deny.rego')
+        writeFile file: 'opa-policies/helpers/kubernetes.rego', text: libraryResource('policy/helpers/kubernetes.rego')
+        writeFile file: 'opa-policies/violation/violation.rego', text: libraryResource('policy/violation/violation.rego')
+        writeFile file: 'opa-policies/warn/warn.rego', text: libraryResource('policy/warn/warn.rego')
 
-    // Ignore exit code for conftest, handle manually
-    sh """
-        helm template ${helmChartDir} > rendered.yaml
-        conftest test rendered.yaml -p ./opa-policies --output json > opa-k8s-result.json || true
-    """
+        // Ignore exit code for conftest, handle manually
+        sh """
+            helm template ${helmChartDir} > rendered.yaml
+            conftest test rendered.yaml -p ./opa-policies --output json > opa-k8s-result.json || true
+        """
 
-    if (!fileExists('opa-k8s-result.json') || readFile('opa-k8s-result.json').trim() == '') {
-        error("❌ OPA policy scan output is empty or failed to parse.")
-    }
-
-    def opaResult = readJSON file: 'opa-k8s-result.json'
-    def violations = []
-
-    opaResult.each { entry ->
-        entry.failures.each { failure ->
-            violations << [
-                source: 'OPA-Kubernetes',
-                target: userConfig.appName,
-                package_name: 'OPA Policy',
-                installed_version: "N/A", 
-                vulnerability_id: failure.msg,
-                severity: failure.metadata?.severity?.toUpperCase() ?: 'HIGH',
-                risk_score: failure.metadata?.score ?: 70,
-                description: failure.metadata?.description ?: failure.msg,
-                fixed_version: failure.metadata?.remediation ?: 'N/A'
-            ]
+        if (!fileExists('opa-k8s-result.json') || readFile('opa-k8s-result.json').trim() == '') {
+            error("OPA policy scan output is empty or failed to parse.")
         }
-    }
 
-    if (violations.size() > 0) {
-        def opaPayload = [vulnerabilities: violations]
-        writeJSON file: 'opa-k8s-upload.json', json: opaPayload, pretty: 2
-        sh "curl -s -X POST https://horizonrelevance.com/pipeline/api/vulnerabilities -H 'Content-Type: application/json' -d @opa-k8s-upload.json"
-        error("❌ OPA policy violations found in Helm/K8s manifests. Failing pipeline.")
+        def opaResult = readJSON file: 'opa-k8s-result.json'
+        def violations = []
+
+        opaResult.each { entry ->
+            entry.failures.each { failure ->
+                violations << [
+                    source: 'OPA-Kubernetes',
+                    target: userConfig.appName,
+                    package_name: 'OPA Policy',
+                    installed_version: "N/A", 
+                    vulnerability_id: failure.msg,
+                    severity: failure.metadata?.severity?.toUpperCase() ?: 'HIGH',
+                    risk_score: failure.metadata?.score ?: 70,
+                    description: failure.metadata?.description ?: failure.msg,
+                    fixed_version: failure.metadata?.remediation ?: 'N/A'
+                ]
+            }
+        }
+
+        if (violations.size() > 0) {
+            def opaPayload = [vulnerabilities: violations]
+            writeJSON file: 'opa-k8s-upload.json', json: opaPayload, pretty: 2
+            sh "curl -s -X POST https://horizonrelevance.com/pipeline/api/vulnerabilities -H 'Content-Type: application/json' -d @opa-k8s-upload.json"
+            error("OPA policy violations found in Helm/K8s manifests. Failing pipeline.")
+        } else {
+            echo "No OPA Kubernetes policy violations found."
+        }
     } else {
-        echo "✅ No OPA Kubernetes policy violations found."
-    }
+        echo "OPA policy scan is disabled by configuration. Skipping."
+    }    
 
     def releaseName = userConfig.appName.toLowerCase().replaceAll(/[^a-z0-9\-]/, '-')
     def ns = userConfig.namespace

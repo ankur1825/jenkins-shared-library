@@ -84,7 +84,7 @@ def run(Map params) {
 
                     script {
                         withCredentials([string(credentialsId: 'sonarqube-token', variable: 'SONAR_TOKEN')]) {
-                            postProcessSonar(sonarProjectKey, SONAR_TOKEN)
+                            postProcessSonar(sonarProjectKey)
                         }
                     }
                 }
