@@ -28,12 +28,12 @@ def call(String projectKey) {
 
     def noIssues = readFile('sonar_flag.txt').contains("NO_ISSUES=true")
     if (!noIssues) {
-        sh '''
-            if ! python3 -c "import pytz" 2>/dev/null; then
-                echo "[INFO] Installing missing Python package: pytz"
-                pip3 install pytz --user
-            fi
-        '''
+        // sh '''
+        //     if ! python3 -c "import pytz" 2>/dev/null; then
+        //         echo "[INFO] Installing missing Python package: pytz"
+        //         pip3 install pytz --user
+        //     fi
+        // '''
         def output = sh(script: 'python3 scripts/process_sonar_ml.py issues.json ai_sonar_results.json', returnStdout: true).trim()
 
         if (output.contains("FAIL_PIPELINE=true")) {
