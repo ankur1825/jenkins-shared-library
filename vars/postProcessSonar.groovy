@@ -8,12 +8,12 @@ def call(String projectKey, String sonarToken) {
     // Write Python script from shared library resource
     writeFile file: 'scripts/process_sonar_ml.py', text: libraryResource('sonar/process_sonar_ml.py')
 
-    withCredentials([string(credentialsId: 'sonarqube-token', variable: 'SONAR_TOKEN')]) {
+    withCredentials([usernamePassword(credentialsId: 'sonar-secret', usernameVariable: 'SONAR_USER', passwordVariable: 'SONAR_PASS')]) {
         withEnv(["PROJECT_KEY=${projectKey}"]) {
             sh '''
                 echo "Downloading issues from SonarQube API for project: $PROJECT_KEY"
-                curl -u admin:$SONAR_TOKEN \
-                     "https://horizonrelevance.com/sonarqube/api/issues/search?componentKeys=$PROJECT_KEY" \
+                curl -u "$SONAR_USER:$SONAR_PASS" \ 
+                    "https://horizonrelevance.com/sonarqube/api/issues/search?componentKeys=$PROJECT_KEY&statuses=OPEN" \
                      -o issues.json
             '''
         }
