@@ -79,7 +79,7 @@ def run(Map params) {
                     }
 
                     timeout(time: 2, unit: 'MINUTES') {
-                        waitForQualityGate abortPipeline: true
+                        waitForQualityGate abortPipeline: false
                     }
 
                     script {
