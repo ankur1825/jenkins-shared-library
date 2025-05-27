@@ -25,9 +25,18 @@ def run(Map params) {
             stage('Read config.json') {
                 script {
                     if (fileExists('config.json')) {
-                        def privateRepo = sh(script: "grep -oP '\\"PRIVATE_REPO\\":\\s*\\"[^\\"]*\\"' config.json | awk -F '\\"' '{print \\$4}'", returnStdout: true).trim()
-                        def tag = sh(script: "grep -oP '\\"tag\\":\\s*\\"[^\\"]*\\"' config.json | awk -F '\\"' '{print \\$4}'", returnStdout: true).trim()
-                        def appName = sh(script: "grep -oP '\\"AppName\\":\\s*\\"[^\\"]*\\"' config.json | awk -F '\\"' '{print \\$4}'", returnStdout: true).trim()
+                        def privateRepo = sh(script: '''
+                            grep -oP '"PRIVATE_REPO":\\s*"[^"]*"' config.json | awk -F '"' '{print $4}'
+                        ''', returnStdout: true).trim()
+
+                        def tag = sh(script: '''
+                            grep -oP '"tag":\\s*"[^"]*"' config.json | awk -F '"' '{print $4}'
+                        ''', returnStdout: true).trim()
+
+                        def appName = sh(script: '''
+                            grep -oP '"AppName":\\s*"[^"]*"' config.json | awk -F '"' '{print $4}'
+                        ''', returnStdout: true).trim()
+
 
                         if (privateRepo && tag && appName) {
                             env.PRIVATE_REPO = privateRepo
