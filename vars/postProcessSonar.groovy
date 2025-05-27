@@ -29,11 +29,15 @@ def call(String projectKey, String sonarToken) {
         python3 scripts/process_sonar_ml.py issues.json ai_sonar_results.json
     """
 
-    // Upload processed vulnerabilities to FastAPI backend
+    // Wrap the AI output in a JSON object with `vulnerabilities` key and send to FastAPI
     sh """
+        echo '{"vulnerabilities":' > wrapper.json
+        cat ai_sonar_results.json >> wrapper.json
+        echo '}' >> wrapper.json
+
         curl -X POST https://horizonrelevance.com/pipeline/api/vulnerabilities \
              -H "Content-Type: application/json" \
-             -d @ai_sonar_results.json
+             -d @wrapper.json
     """
 
     echo "Post-processing complete. AI-enhanced SonarQube vulnerabilities uploaded."
