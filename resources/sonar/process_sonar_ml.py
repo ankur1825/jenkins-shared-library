@@ -1,46 +1,21 @@
 import json
 import sys
 import os
+from datetime import datetime
 
 input_file = sys.argv[1]
 output_file = sys.argv[2]
 
-# Check if input file exists and is not empty
-if not os.path.exists(input_file) or os.path.getsize(input_file) == 0:
-    print("[INFO] No issues found or file is empty. Creating empty output.")
-    with open(output_file, "w") as f:
-        json.dump([], f, indent=2)
-    sys.exit(0)
+def predict_severity(message):
+    message = message.lower()
+    if "sql injection" in message or "command injection" in message or "buffer overflow" in message:
+        return "Critical"
+    elif "xss" in message or "cross-site scripting" in message or "hardcoded password" in message:
+        return "High"
+    elif "csrf" in message or "open redirect" in message:
+        return "Medium"
+    return "Low"
 
-# Try to load JSON safely
-try:
-    with open(input_file) as f:
-        data = json.load(f)
-except json.JSONDecodeError:
-    print("[ERROR] Failed to parse JSON. Input file is likely invalid.")
-    sys.exit(1)
-
-# Define SAST vulnerability patterns and mapped severity
-sast_keywords = {
-    "sql injection": "Critical",
-    "xss": "High",
-    "cross-site scripting": "High",
-    "hardcoded password": "High",
-    "command injection": "Critical",
-    "insecure deserialization": "Critical",
-    "csrf": "Medium",
-    "cross-site request forgery": "Medium",
-    "open redirect": "Medium",
-    "path traversal": "High",
-    "directory traversal": "High",
-    "buffer overflow": "Critical",
-    "cryptographic weakness": "Medium",
-    "weak encryption": "Medium",
-    "ldap injection": "High",
-    "sensitive data exposure": "High"
-}
-
-# Risk scores mapping
 risk_score_map = {
     "Low": 1,
     "Medium": 2,
@@ -48,24 +23,35 @@ risk_score_map = {
     "Critical": 4
 }
 
-with open(input_file) as f:
-    data = json.load(f)
+if not os.path.exists(input_file) or os.path.getsize(input_file) == 0:
+    print("[INFO] No issues found or file is empty. Creating empty output.")
+    with open(output_file, "w") as f:
+        json.dump([], f, indent=2)
+    print("FAIL_PIPELINE=false")
+    sys.exit(0)
+
+try:
+    with open(input_file) as f:
+        data = json.load(f)
+except json.JSONDecodeError:
+    print("[ERROR] Failed to parse JSON.")
+    sys.exit(1)
 
 processed = []
+fail_pipeline = False
+
 for issue in data.get("issues", []):
-    message = issue.get("message", "").lower()
-    prediction = "Low"
-
-    # Match against known SAST patterns
-    for keyword, severity in sast_keywords.items():
-        if keyword in message:
-            prediction = severity
-            break
-
+    prediction = predict_severity(issue.get("message", ""))
     risk_score = risk_score_map[prediction]
+
+    if prediction in ["High", "Critical"]:
+        fail_pipeline = True
 
     processed.append({
         "target": issue.get("component", ""),
+        "package_name": "SonarQube Code Smell",
+        "installed_version": "N/A",
+        "vulnerability_id": issue.get("rule", "undefined"),
         "message": issue.get("message", ""),
         "line": issue.get("line", 0),
         "type": issue.get("type", ""),
@@ -75,8 +61,11 @@ for issue in data.get("issues", []):
         "rule": issue.get("rule", ""),
         "status": issue.get("status", ""),
         "author": issue.get("author", ""),
-        "source": "SonarQube"
+        "source": "SonarQube",
+        "timestamp": datetime.utcnow().isoformat()
     })
 
 with open(output_file, "w") as f:
     json.dump(processed, f, indent=2)
+
+print("FAIL_PIPELINE=" + str(fail_pipeline).lower())
