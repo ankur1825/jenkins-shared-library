@@ -8,7 +8,7 @@ def call(String projectKey, String sonarToken) {
     // Write Python script from shared library resource
     writeFile file: 'scripts/process_sonar_ml.py', text: libraryResource('sonar/process_sonar_ml.py')
 
-    withCredentials([usernamePassword(credentialsId: 'sonar-secret', usernameVariable: 'SONAR_USER', passwordVariable: 'SONAR_PASS')]) {
+    withCredentials([usernamePassword(credentialsId: 'sonar_secret', usernameVariable: 'SONAR_USER', passwordVariable: 'SONAR_PASS')]) {
         withEnv(["PROJECT_KEY=${projectKey}"]) {
             sh '''
                 echo "Downloading issues from SonarQube API for project: $PROJECT_KEY"
