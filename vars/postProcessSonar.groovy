@@ -12,7 +12,7 @@ def call(String projectKey, String sonarToken) {
         withEnv(["PROJECT_KEY=${projectKey}"]) {
             sh '''
                 echo "Downloading issues from SonarQube API for project: $PROJECT_KEY"
-                curl -u "$SONAR_USER:$SONAR_PASS" \ 
+                curl -u "$SONAR_USER:$SONAR_PASS" \
                     "https://horizonrelevance.com/sonarqube/api/issues/search?componentKeys=$PROJECT_KEY&statuses=OPEN" \
                      -o issues.json
             '''
