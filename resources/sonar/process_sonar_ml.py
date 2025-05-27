@@ -1,8 +1,22 @@
 import json
 import sys
+import os
 
 input_file = sys.argv[1]
 output_file = sys.argv[2]
+
+if not os.path.exists(input_file) or os.path.getsize(input_file) == 0:
+    print(f"[ERROR] Input file {input_file} is empty or missing.")
+    sys.exit(1)
+
+try:
+    with open(input_file) as f:
+        data = json.load(f)
+except json.JSONDecodeError as e:
+    print(f"[ERROR] Failed to parse JSON: {e}")
+    with open(input_file) as f:
+        print(f.read())
+    sys.exit(1)
 
 # Define SAST vulnerability patterns and mapped severity
 sast_keywords = {
