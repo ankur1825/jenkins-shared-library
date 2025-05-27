@@ -2,7 +2,7 @@ import json
 import sys
 import os
 from datetime import datetime
-import pytz
+#import pytz
 
 input_file = sys.argv[1]
 output_file = sys.argv[2]
@@ -42,8 +42,8 @@ risk_score_map = {
 }
 
 # Set Eastern Timezone (New York)
-est = pytz.timezone('America/New_York')
-timestamp = datetime.now(est).strftime('%Y-%m-%d %I:%M:%S %p %Z')
+#est = pytz.timezone('America/New_York')
+#timestamp = datetime.now(est).strftime('%Y-%m-%d %I:%M:%S %p %Z')
 
 processed = []
 fail_pipeline = False
@@ -77,7 +77,7 @@ for issue in data.get("issues", []):
         "status": issue.get("status", ""),
         "author": issue.get("author", ""),
         "source": "SonarQube",
-        "timestamp": timestamp 
+        "timestamp": datetime.utcnow().isoformat() + "Z"
     })
 
 with open(output_file, "w") as f:
@@ -85,3 +85,5 @@ with open(output_file, "w") as f:
 
 if fail_pipeline:
     print("FAIL_PIPELINE=true")
+else:
+    print("FAIL_PIPELINE=false")    
