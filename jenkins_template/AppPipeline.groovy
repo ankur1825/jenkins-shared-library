@@ -59,10 +59,14 @@ def run(Map params) {
                         error "sonar-project.properties not found!"
                     }
 
-                    def sonarProjectKey = sh(script: "grep '^sonar.projectKey=' sonar-project.properties | cut -d'=' -f2", returnStdout: true).trim()
+                    def sonarProjectKey = sh(
+                        script: "grep '^sonar.projectKey=' sonar-project.properties | awk -F '=' '{print \$2}' | tr -d '\\r\\n' | xargs",
+                        returnStdout: true
+                    ).trim()
                     if (!sonarProjectKey) {
                         error "sonar.projectKey is missing or empty!"
                     }
+                    echo "Sonar Project Key: ${sonarProjectKey}"
 
                     withSonarQubeEnv('sonarqube') {
                         withCredentials([string(credentialsId: 'sonarqube-token', variable: 'SONAR_TOKEN')]) {
