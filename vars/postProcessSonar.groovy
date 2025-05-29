@@ -46,7 +46,7 @@ def call(String projectKey) {
                 cat ai_sonar_results.json >> wrapper.json
                 echo '}' >> wrapper.json
 
-                curl -s -X POST https://horizonrelevance.com/pipeline/api/vulnerabilities \
+                curl -s -X POST https://horizonrelevance.com/pipeline/api/upload_vulnerabilities \
                      -H "Content-Type: application/json" \
                      -d @wrapper.json
             else
