@@ -6,6 +6,9 @@ def call(Map params = [:]) {
 
     def imageName = params.imageName
     def uploadResults = params.get('uploadResults', true) // Default to true
+    def appName = env.APP_NAME
+    def jenkinsJob = env.JOB_NAME
+    def buildNumber = env.BUILD_NUMBER
 
     echo "Starting Trivy Scan..."
     echo "Scanning Image: ${imageName}"
@@ -25,7 +28,10 @@ def call(Map params = [:]) {
         helm upgrade --install trivy-cli-scan ./trivy-scan-workdir \
             --namespace horizon-relevance-dev \
             --set scan.imageName=${imageName} \
-            --set scan.uploadResults=${uploadResults}
+            --set scan.uploadResults=${uploadResults} \
+            --set scan.application=${appName} \
+          --set scan.jenkinsJob=${jenkinsJob} \
+          --set scan.buildNumber=${buildNumber}
     """
 
     // sh """
