@@ -83,7 +83,7 @@ def call(Map params = [:]) {
                     severity: failure.metadata?.severity?.toUpperCase() ?: 'HIGH',
                     risk_score: failure.metadata?.score ?: 70,
                     description: failure.metadata?.description ?: failure.msg,
-                    fixed_version: failure.metadata?.remediation ?: 'N/A'
+                    remediation: failure.metadata?.remediation ?: 'N/A'
                 ]
             }
         }
