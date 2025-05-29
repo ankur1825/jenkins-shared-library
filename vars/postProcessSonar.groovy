@@ -37,22 +37,22 @@ def call(String projectKey) {
             failPipeline = true  // defer error call until after upload
         }
 
-        sh '''
-            COUNT=$(jq '. | length' ai_sonar_results.json)
-            if [ "$COUNT" -gt 0 ]; then
+        sh """
+            COUNT=\$(jq '. | length' ai_sonar_results.json)
+            if [ "\$COUNT" -gt 0 ]; then
                 echo '{' > wrapper.json
                 echo '  "application": "${application}",' >> wrapper.json
-                echo '{"vulnerabilities":' > wrapper.json
+                echo '  "vulnerabilities":' >> wrapper.json
                 cat ai_sonar_results.json >> wrapper.json
                 echo '}' >> wrapper.json
 
-                curl -s -X POST https://horizonrelevance.com/pipeline/api/upload_vulnerabilities \
-                     -H "Content-Type: application/json" \
-                     -d @wrapper.json
+                curl -s -X POST https://horizonrelevance.com/pipeline/api/upload_vulnerabilities \\
+                    -H "Content-Type: application/json" \\
+                    -d @wrapper.json
             else
                 echo "[INFO] No SonarQube vulnerabilities to upload."
             fi
-        '''
+        """
     } else {
         echo "[INFO] No SonarQube issues to process."
     }
