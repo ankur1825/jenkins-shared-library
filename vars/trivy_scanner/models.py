@@ -12,6 +12,9 @@ class Vulnerability:
     fixed_version: str
     cvss_score: float = 0.0
     exploitability_score: float = 0.0
+    application: str = ""
+    jenkins_job: str = ""
+    build_number: int = 0
 
     def calculate_risk_score(self):
         severity_map = {
