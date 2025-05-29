@@ -29,10 +29,7 @@ def call(Map params = [:]) {
     userConfig.namespace    = userConfig.namespace ?: 'default'
     userConfig.replicaCount = userConfig.replicaCount ?: 1
 
-    def jsonString = JsonOutput.toJson(userConfig)
-    def prettyYaml = JsonOutput.prettyPrint(jsonString)
-    writeFile file: 'custom-values.yaml', text: prettyYaml
-
+    writeFile file: 'custom-values.yaml', text: JsonOutput.prettyPrint(JsonOutput.toJson(userConfig))
     echo "Generated custom-values.yaml with all dynamic fields from config.json"
 
     def helmChartDir = "generic-helm"
@@ -48,7 +45,7 @@ def call(Map params = [:]) {
         writeFile file: "${helmChartDir}/templates/ingress.yaml", text: libraryResource('Helm-chart/templates/ingress.yaml')
     }
 
-    // 📦 OPA Scan - Kubernetes Rego
+    // OPA Scan - Kubernetes Policies
     if (params.ENABLE_OPA?.toBoolean()) {
         echo "🔍 Running OPA policy check for Kubernetes manifests..."
 
@@ -59,7 +56,6 @@ def call(Map params = [:]) {
         writeFile file: 'opa-policies/violation/violation.rego', text: libraryResource('policy/violation/violation.rego')
         writeFile file: 'opa-policies/warn/warn.rego', text: libraryResource('policy/warn/warn.rego')
 
-        // Ignore exit code for conftest, handle manually
         sh """
             helm template ${helmChartDir} > rendered.yaml
             conftest test rendered.yaml -p ./opa-policies --output json > opa-k8s-result.json || true
@@ -78,11 +74,11 @@ def call(Map params = [:]) {
                     source: 'OPA-Kubernetes',
                     target: userConfig.appName,
                     package_name: 'OPA Policy',
-                    installed_version: "N/A", 
-                    violation: failure.msg,
+                    installed_version: "N/A",
+                    violation: failure.msg?.toString() ?: "OPA violation occurred",
                     severity: failure.metadata?.severity?.toUpperCase() ?: 'HIGH',
                     risk_score: failure.metadata?.score ?: 70,
-                    description: failure.metadata?.description ?: failure.msg,
+                    description: failure.metadata?.description ?: failure.msg?.toString(),
                     remediation: failure.metadata?.remediation ?: 'N/A'
                 ]
             }
@@ -92,6 +88,7 @@ def call(Map params = [:]) {
             def jobName = env.JOB_NAME ?: 'unknown'
             def buildNumber = env.BUILD_NUMBER ?: '0'
             def jenkinsUrl = "${env.JENKINS_URL}/job/${jobName}/${buildNumber}"
+
             def opaPayload = [
                 application: userConfig.appName,
                 risks: violations.collect { v ->
@@ -102,15 +99,21 @@ def call(Map params = [:]) {
                     ]
                 }
             ]
+
+            // 🛠️ Log full JSON payload
+            echo "OPA-Kubernetes Payload JSON:\n" + JsonOutput.prettyPrint(JsonOutput.toJson(opaPayload))
+
             writeJSON file: 'opa-k8s-upload.json', json: opaPayload, pretty: 2
+
             sh "curl -s -X POST https://horizonrelevance.com/pipeline/api/opa/risks/ -H 'Content-Type: application/json' -d @opa-k8s-upload.json"
+
             error("OPA policy violations found in Helm/K8s manifests. Failing pipeline.")
         } else {
             echo "No OPA Kubernetes policy violations found."
         }
     } else {
         echo "OPA policy scan is disabled by configuration. Skipping."
-    }    
+    }
 
     def releaseName = userConfig.appName.toLowerCase().replaceAll(/[^a-z0-9\-]/, '-')
     def ns = userConfig.namespace
