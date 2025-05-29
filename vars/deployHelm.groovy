@@ -94,10 +94,10 @@ def call(Map params = [:]) {
             def jenkinsUrl = "${env.JENKINS_URL}/job/${jobName}/${buildNumber}"
             def opaPayload = [
                 application: userConfig.appName,
-                vulnerabilities: violations.collect { v ->
+                risks: violations.collect { v ->
                     v + [
                         jenkins_job: jobName,
-                        build_number: buildNumber,
+                        build_number: buildNumber.toInteger(),
                         jenkins_url: jenkinsUrl
                     ]
                 }
