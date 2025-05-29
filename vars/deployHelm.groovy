@@ -89,9 +89,21 @@ def call(Map params = [:]) {
         }
 
         if (violations.size() > 0) {
-            def opaPayload = [vulnerabilities: violations]
+            def jobName = env.JOB_NAME ?: 'unknown'
+            def buildNumber = env.BUILD_NUMBER ?: '0'
+            def jenkinsUrl = "${env.JENKINS_URL}/job/${jobName}/${buildNumber}"
+            def opaPayload = [
+                application: userConfig.appName,
+                vulnerabilities: violations.collect { v ->
+                    v + [
+                        jenkins_job: jobName,
+                        build_number: buildNumber,
+                        jenkins_url: jenkinsUrl
+                    ]
+                }
+            ]
             writeJSON file: 'opa-k8s-upload.json', json: opaPayload, pretty: 2
-            sh "curl -s -X POST https://horizonrelevance.com/pipeline/api/vulnerabilities -H 'Content-Type: application/json' -d @opa-k8s-upload.json"
+            sh "curl -s -X POST https://horizonrelevance.com/pipeline/api/opa/risks/ -H 'Content-Type: application/json' -d @opa-k8s-upload.json"
             error("OPA policy violations found in Helm/K8s manifests. Failing pipeline.")
         } else {
             echo "No OPA Kubernetes policy violations found."
