@@ -28,6 +28,7 @@ def call(String projectKey) {
 
     def noIssues = readFile('sonar_flag.txt').contains("NO_ISSUES=true")
     def failPipeline = false
+    def application = projectKey  // use Sonar projectKey as application name
 
     if (!noIssues) {
         def output = sh(script: 'python3 scripts/process_sonar_ml.py issues.json ai_sonar_results.json', returnStdout: true).trim()
@@ -39,6 +40,8 @@ def call(String projectKey) {
         sh '''
             COUNT=$(jq '. | length' ai_sonar_results.json)
             if [ "$COUNT" -gt 0 ]; then
+                echo '{' > wrapper.json
+                echo '  "application": "${application}",' >> wrapper.json
                 echo '{"vulnerabilities":' > wrapper.json
                 cat ai_sonar_results.json >> wrapper.json
                 echo '}' >> wrapper.json
