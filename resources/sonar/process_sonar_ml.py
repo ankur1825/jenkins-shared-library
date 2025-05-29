@@ -2,7 +2,6 @@ import json
 import sys
 import os
 from datetime import datetime
-#import pytz
 
 input_file = sys.argv[1]
 output_file = sys.argv[2]
@@ -19,6 +18,12 @@ try:
 except json.JSONDecodeError:
     print("[ERROR] Failed to parse JSON. Input file is invalid.")
     sys.exit(1)
+
+# Grab Jenkins metadata from environment
+jenkins_job = os.getenv("JOB_NAME", "unknown_job")
+build_number = os.getenv("BUILD_NUMBER", "0")
+jenkins_base = os.getenv("JENKINS_URL", "https://horizonrelevance.com/jenkins")
+jenkins_url = f"{jenkins_base}/job/{jenkins_job}/{build_number}/console"
 
 sast_keywords = {
     "sql injection": "Critical",
@@ -40,10 +45,6 @@ risk_score_map = {
     "High": 3,
     "Critical": 4
 }
-
-# Set Eastern Timezone (New York)
-#est = pytz.timezone('America/New_York')
-#timestamp = datetime.now(est).strftime('%Y-%m-%d %I:%M:%S %p %Z')
 
 processed = []
 fail_pipeline = False
@@ -77,7 +78,10 @@ for issue in data.get("issues", []):
         "status": issue.get("status", ""),
         "author": issue.get("author", ""),
         "source": "SonarQube",
-        "timestamp": datetime.utcnow().isoformat() + "Z"
+        "timestamp": datetime.utcnow().isoformat() + "Z",
+        "jenkins_job": jenkins_job,
+        "build_number": int(build_number),
+        "jenkins_url": jenkins_url
     })
 
 with open(output_file, "w") as f:
@@ -86,4 +90,4 @@ with open(output_file, "w") as f:
 if fail_pipeline:
     print("FAIL_PIPELINE=true")
 else:
-    print("FAIL_PIPELINE=false")    
+    print("FAIL_PIPELINE=false")
