@@ -2,6 +2,7 @@ import groovy.json.JsonOutput
 
 def call(Map params = [:]) {
     def configPath = 'config.json'
+    echo "OPA Flag Received: ${params.ENABLE_OPA}"
 
     if (!fileExists(configPath)) {
         error "config.json not found in workspace!"

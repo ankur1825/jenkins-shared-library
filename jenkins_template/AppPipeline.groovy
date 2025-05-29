@@ -127,7 +127,7 @@ def run(Map params) {
             }
 
             stage('Deploy to Kubernetes') {
-                deployHelm()
+                deployHelm(ENABLE_OPA: params.ENABLE_OPA)
             }
         } catch (Exception e) {
             echo "Pipeline failed due to: ${e.message}"
