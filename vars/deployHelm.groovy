@@ -79,7 +79,7 @@ def call(Map params = [:]) {
                     target: userConfig.appName,
                     package_name: 'OPA Policy',
                     installed_version: "N/A", 
-                    vulnerability_id: failure.msg,
+                    violation: failure.msg,
                     severity: failure.metadata?.severity?.toUpperCase() ?: 'HIGH',
                     risk_score: failure.metadata?.score ?: 70,
                     description: failure.metadata?.description ?: failure.msg,
