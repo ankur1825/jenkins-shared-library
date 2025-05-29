@@ -1,5 +1,6 @@
 # main.py
 import click
+import sys
 from scanner import scan_image
 from trivy_parser import parse_trivy_output
 from api_client import upload_vulnerabilities
@@ -22,6 +23,12 @@ def main(image, upload, application, jenkins_job, build_number):
 
     if upload:
         upload_vulnerabilities(vulnerabilities, application, jenkins_job, build_number)
+
+    # Fail pipeline on CRITICAL or HIGH
+    blocking = [v for v in vulnerabilities if v.severity.upper() in {"CRITICAL", "HIGH"}]
+    if blocking:
+        print(f"Found {len(blocking)} blocking vulnerabilities (CRITICAL or HIGH).")
+        sys.exit(1)    
 
 if __name__ == "__main__":
     main()
