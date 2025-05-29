@@ -8,25 +8,18 @@ spec:
   template:
     spec:
       containers:
-        - name: trivy-cli
-          image: "{{ .Values.image.repository }}:{{ .Values.image.tag }}"
-          imagePullPolicy: {{ .Values.image.pullPolicy }}
-          args:
-            - "--image"
-            - "{{ .Values.scan.imageName }}"
-            {{- if .Values.scan.uploadResults }}
-            - "--upload"
-            {{- end }}
-            {{- if .Values.scan.application }}
-            - "--application"
-            - "{{ .Values.scan.application }}"
-            {{- end }}
-            {{- if .Values.scan.jenkinsJob }}
-            - "--jenkins-job"
-            - "{{ .Values.scan.jenkinsJob }}"
-            {{- end }}
-            {{- if .Values.scan.buildNumber }}
-            - "--build-number"
-            - "{{ .Values.scan.buildNumber }}"
-            {{- end }}
+      - name: trivy-cli
+        image: "{{ .Values.image.repository }}:{{ .Values.image.tag }}"
+        imagePullPolicy: {{ .Values.image.pullPolicy }}
+        args:
+        - "--image"
+        - "{{ .Values.scan.imageName }}"
+        - "--upload"
+        - "--application"
+        - "{{ .Values.scan.application }}"
+        env:
+        - name: BUILD_NUMBER
+          value: "{{ .Values.scan.buildNumber }}"
+        - name: JOB_NAME
+          value: "{{ .Values.scan.jenkinsJob }}"
       restartPolicy: Never
