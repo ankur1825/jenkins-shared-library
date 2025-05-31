@@ -82,9 +82,14 @@ def run(Map params) {
                         waitForQualityGate abortPipeline: false
                     }
 
-                    script {
-                        withCredentials([string(credentialsId: 'sonarqube-token', variable: 'SONAR_TOKEN')]) {
-                            postProcessSonar(sonarProjectKey)
+                    wrap([$class: 'BuildUser']) {
+                        def triggeredBy = env.BUILD_USER ?: "unknown"
+                        echo "Build triggered by: ${triggeredBy}"
+
+                        script {
+                            withCredentials([string(credentialsId: 'sonarqube-token', variable: 'SONAR_TOKEN')]) {
+                                postProcessSonar(sonarProjectKey, params.REPO_URL, triggeredBy)
+                            }
                         }
                     }
                 }

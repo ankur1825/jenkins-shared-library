@@ -1,4 +1,4 @@
-def call(String projectKey) {
+def call(String projectKey, String repoUrl, String triggeredBy) {
     if (!projectKey?.trim()) {
         error "Sonar project key is empty or null – cannot proceed with post-processing."
     }
@@ -29,6 +29,8 @@ def call(String projectKey) {
     def noIssues = readFile('sonar_flag.txt').contains("NO_ISSUES=true")
     def failPipeline = false
     def application = projectKey  // use Sonar projectKey as application name
+    def repoUrl = repoUrl  
+    def triggeredBy = triggeredBy
 
     if (!noIssues) {
         def output = sh(script: 'python3 scripts/process_sonar_ml.py issues.json ai_sonar_results.json', returnStdout: true).trim()
@@ -42,6 +44,8 @@ def call(String projectKey) {
             if [ "\$COUNT" -gt 0 ]; then
                 echo '{' > wrapper.json
                 echo '  "application": "${application}",' >> wrapper.json
+                echo '  "repo_url": "${repoUrl}",' >> wrapper.json
+                echo '  "requestedBy": "${triggeredBy}",' >> wrapper.json
                 echo '  "vulnerabilities":' >> wrapper.json
                 cat ai_sonar_results.json >> wrapper.json
                 echo '}' >> wrapper.json
