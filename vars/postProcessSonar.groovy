@@ -44,6 +44,9 @@ def call(String projectKey, String repoUrl, String triggeredBy) {
                 echo '  "application": "${application}",' >> wrapper.json
                 echo '  "repo_url": "${repoUrl}",' >> wrapper.json
                 echo '  "requestedBy": "${triggeredBy}",' >> wrapper.json
+                echo '  "jenkins_job": "${env.JOB_NAME}",' >> wrapper.json
+                echo '  "build_number": ${env.BUILD_NUMBER},' >> wrapper.json
+                echo '  "jenkins_url": "${env.JENKINS_URL}/job/${env.JOB_NAME}/${env.BUILD_NUMBER}/console",' >> wrapper.json
                 echo '  "vulnerabilities":' >> wrapper.json
                 cat ai_sonar_results.json >> wrapper.json
                 echo '}' >> wrapper.json
