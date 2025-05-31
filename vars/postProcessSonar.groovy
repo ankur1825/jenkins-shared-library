@@ -29,8 +29,6 @@ def call(String projectKey, String repoUrl, String triggeredBy) {
     def noIssues = readFile('sonar_flag.txt').contains("NO_ISSUES=true")
     def failPipeline = false
     def application = projectKey  // use Sonar projectKey as application name
-    def repoUrl = repoUrl  
-    def triggeredBy = triggeredBy
 
     if (!noIssues) {
         def output = sh(script: 'python3 scripts/process_sonar_ml.py issues.json ai_sonar_results.json', returnStdout: true).trim()
