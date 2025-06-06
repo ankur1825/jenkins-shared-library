@@ -46,7 +46,7 @@ def call(Map params = [:]) {
     // Construct the final payload with the required top-level fields.
     def payload = [
         application   : application,
-        scanner_type  : "OPA",
+        source        : "OPA",
         job_name      : jobName,
         build_number  : buildNumber,
         requested_by  : requestedBy,
