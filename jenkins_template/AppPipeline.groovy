@@ -106,7 +106,7 @@ def run(Map params) {
                     def imageName = "${env.PRIVATE_REPO}/${env.APP_NAME}:${env.TAG}".toLowerCase()
                     opaEnsureServerRunning()
                     def opaInput = createOPAInput(imageName, env.TAG)
-                    def enrichedOPAResults = opaEvaluateCurl(inputJson: opaInput, imageName: imageName)
+                    def enrichedOPAResults = opaEvaluateCurl(inputJson: opaInput, imageName: imageName, application: env.APP_NAME, jobName: env.JOB_NAME, buildNumber: env.BUILD_NUMBER, requestedBy: env.BUILD_USER_ID)
                     echo "OPA Risk Evaluation Complete. Total Enriched Risks: ${enrichedOPAResults.size()}"
                 }
             }

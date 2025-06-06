@@ -7,6 +7,10 @@ def call(Map params = [:]) {
     def opaUrl = params.get('opaUrl', "http://opa.horizon-relevance-dev.svc.cluster.local:8181/v1/data/docker/security/deny")
     def backendUrl = params.get('backendUrl', "https://horizonrelevance.com/pipeline/api/opa/risks/")
     def imageName = params.get('imageName', 'unknown')
+    def application = params.get('application')
+    def jobName = params.get('jobName')
+    def buildNumber = params.get('buildNumber')
+    def requestedBy = params.get('requestedBy')
 
     echo "Evaluating OPA Policy..."
     writeFile file: 'opa-input.json', text: inputJson
@@ -31,10 +35,14 @@ def call(Map params = [:]) {
                     severity == "MEDIUM" ? 50 : 20
 
         enriched << [
+            application: application,
             source: "OPA",
+            jobName: jobName,
+            buildNumber: buildNumber,
             target: imageName,
             violation: msg,
             severity: severity,
+            requestedBy: requestedBy,
             risk_score: score
         ]
     }
