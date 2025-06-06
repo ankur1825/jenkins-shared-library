@@ -3,7 +3,7 @@ import argparse
 import json
 import os
 import requests
-from trivy_scanner import scan_image
+from scanner import scan_image
 
 def parse_args():
     parser = argparse.ArgumentParser(description="Trivy vulnerability scanner and uploader")
