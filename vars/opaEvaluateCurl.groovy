@@ -35,18 +35,25 @@ def call(Map params = [:]) {
                     severity == "MEDIUM" ? 50 : 20
 
         enriched << [
-            source: "OPA",
-            target: imageName,
-            violation: msg,
-            severity: severity,
-            risk_score: score
+            source            : "OPA",
+            package_name      : "OPA Policy",
+            installed_version : "N/A",
+            target            : imageName,
+            violation         : msg,
+            severity          : severity,
+            risk_score        : score,
+            description       : msg,
+            remediation       : "Review policy",
+            jenkins_job       : jobName,
+            build_number      : buildNumber,
+            jenkins_url       : "https://horizonrelevance.com/jenkins//job/${jobName}/${buildNumber}"
         ]
     }
 
     // Construct the final payload with the required top-level fields.
     def payload = [
         application   : application,
-        source        : "OPA",
+        scanner_type  : "OPA",
         job_name      : jobName,
         build_number  : buildNumber,
         requested_by  : requestedBy,
