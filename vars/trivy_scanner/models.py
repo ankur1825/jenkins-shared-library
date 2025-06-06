@@ -24,8 +24,10 @@ class Vulnerability:
             "LOW": 3,
             "UNKNOWN": 1
         }
-        severity_score = severity_map.get(self.severity.upper(), 1)
-        fix_available_score = 1.0 if self.fixed_version else 0.0
+        severity_key = (self.severity or "UNKNOWN").upper()
+        severity_score = severity_map.get(severity_key, 1)
+        
+        fix_available_score = 1.0 if self.fixed_version and self.fixed_version.upper() != "N/A" else 0.0
 
         risk_score = (severity_score * 0.4) + (self.cvss_score * 0.3) + (self.exploitability_score * 0.2) + (fix_available_score * 0.1)
         return round(risk_score, 2)
