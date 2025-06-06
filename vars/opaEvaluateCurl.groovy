@@ -35,19 +35,25 @@ def call(Map params = [:]) {
                     severity == "MEDIUM" ? 50 : 20
 
         enriched << [
-            application: application,
             source: "OPA",
-            jobName: jobName,
-            buildNumber: buildNumber,
             target: imageName,
             violation: msg,
             severity: severity,
-            requestedBy: requestedBy,
             risk_score: score
         ]
     }
 
-    writeJSON file: "opa-risk-upload.json", json: [risks: enriched], pretty: 4
+    // Construct the final payload with the required top-level fields.
+    def payload = [
+        application   : application,
+        scanner_type  : "OPA",
+        job_name      : jobName,
+        build_number  : buildNumber,
+        requested_by  : requestedBy,
+        risks         : enriched
+    ]
+
+    writeJSON file: "opa-risk-upload.json", json: payload, pretty: 4
 
     sh """
         curl -s -X POST ${backendUrl} \
