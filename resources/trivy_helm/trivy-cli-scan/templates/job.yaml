@@ -17,9 +17,14 @@ spec:
         - "--upload"
         - "--application"
         - "{{ .Values.scan.application }}"
-        env:
-        - name: BUILD_NUMBER
-          value: "{{ .Values.scan.buildNumber }}"
-        - name: JOB_NAME
-          value: "{{ .Values.scan.jenkinsJob }}"
+        - "--repo-url"
+        - "{{ .Values.scan.repoUrl }}"
+        - "--jenkins-url"
+        - "{{ .Values.scan.jenkinsUrl }}"
+        - "--jenkins-job"
+        - "{{ .Values.scan.jenkinsJob }}"
+        - "--build-number"
+        - "{{ .Values.scan.buildNumber }}"
+        - "--requested-by"
+        - "{{ .Values.scan.requestedBy }}"
       restartPolicy: Never

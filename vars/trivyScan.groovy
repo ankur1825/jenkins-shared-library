@@ -9,6 +9,7 @@ def call(Map params = [:]) {
     def appName = env.APP_NAME
     def jenkinsJob = env.JOB_NAME
     def buildNumber = env.BUILD_NUMBER
+    def requestedBy = currentBuild.getBuildCauses()[0]?.userId ?: "jenkins@horizonrelevance.com"
 
     echo "Starting Trivy Scan..."
     echo "Scanning Image: ${imageName}"
@@ -30,8 +31,11 @@ def call(Map params = [:]) {
             --set scan.imageName=${imageName} \
             --set scan.uploadResults=${uploadResults} \
             --set scan.application=${appName} \
-          --set scan.jenkinsJob=${jenkinsJob} \
-          --set scan.buildNumber=${buildNumber}
+            --set scan.repoUrl=${params.repoUrl} \
+            --set scan.jenkinsUrl=${env.BUILD_URL} \
+            --set scan.jenkinsJob=${jenkinsJob} \
+            --set scan.buildNumber=${buildNumber} \
+            --set scan.requestedBy=${requestedBy}
     """
 
     // sh """

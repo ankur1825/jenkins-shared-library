@@ -8,4 +8,7 @@ scan:
   uploadResults: true
   application: ""       
   jenkinsJob: ""        
-  buildNumber: 0        
+  buildNumber: 0   
+  repoUrl: ""                 
+  jenkinsUrl: ""              
+  requestedBy: ""          
