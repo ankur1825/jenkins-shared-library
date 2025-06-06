@@ -99,11 +99,6 @@ def run(Map params) {
                 stage('Trivy Scan Base Image') {
                     trivyScan(imageName: env.BASE_IMAGE, uploadResults: true, application: env.APP_NAME, buildNumber: env.BUILD_NUMBER, jenkinsJob: env.JOB_NAME)
                 }
-
-                stage('Trivy Scan Built Image') {
-                    def imageName = "${env.PRIVATE_REPO}/${env.APP_NAME}:${env.TAG}".toLowerCase()
-                    trivyScan(imageName: imageName, uploadResults: true, application: env.APP_NAME, buildNumber: env.BUILD_NUMBER, jenkinsJob: env.JOB_NAME)
-                }
             }
 
             if (params.ENABLE_OPA?.toBoolean()) {
@@ -119,6 +114,13 @@ def run(Map params) {
             stage('Build Docker Image') {
                 def imageName = "${env.PRIVATE_REPO}/${env.APP_NAME}:${env.TAG}".toLowerCase()
                 sh "docker build -t ${imageName} ."
+            }
+
+            if (params.ENABLE_TRIVY?.toBoolean()) {
+                stage('Trivy Scan Built Image') {
+                    def imageName = "${env.PRIVATE_REPO}/${env.APP_NAME}:${env.TAG}".toLowerCase()
+                    trivyScan(imageName: imageName, uploadResults: true, application: env.APP_NAME, buildNumber: env.BUILD_NUMBER, jenkinsJob: env.JOB_NAME)
+                }
             }
 
             stage('Push Docker Image') {
