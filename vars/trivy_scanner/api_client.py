@@ -9,11 +9,11 @@ def upload_vulnerabilities(vulnerabilities, application_name: str, repo_url: str
         "application": application_name,
         "requestedBy": requested_by,
         "repo_url": repo_url,
+        "jenkins_url": jenkins_url,
+        "jenkins_job": jenkins_job,
+        "build_number": build_number,
         "vulnerabilities": [v.__dict__ | {
             "source": "Trivy",
-            "jenkins_job": jenkins_job,
-            "build_number": build_number,
-            "jenkins_url": jenkins_url
         } for v in vulnerabilities]
     }
 

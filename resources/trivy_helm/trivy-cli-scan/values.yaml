@@ -1,6 +1,6 @@
 image:
   repository: ankur1825/horizon-trivy
-  tag: 1.1.0
+  tag: 1.1.1
   pullPolicy: Always
 
 scan:
