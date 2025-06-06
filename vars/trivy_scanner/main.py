@@ -83,9 +83,9 @@ def main(image, upload, application, jenkins_job, build_number, repo_url, jenkin
 
     for v in vulnerabilities:
         print(f"- {v.severity}: {v.package_name} ({v.vulnerability_id})")
-        print(f"     Fix: {v.get('remediation')}")
-        print(f"     Risk Score: {v.get('risk_score', 'N/A')}")
-        print(f"     Description: {v.get('title')[:80]}...\n")
+        print(f"     Fix: {v.fixed_version}")
+        #print(f"     Risk Score: {v.get('risk_score', 'N/A')}")
+        #print(f"     Description: {v.get('title')[:80]}...\n")
 
     if upload:
         print("Uploading results to backend...")
