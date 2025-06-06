@@ -28,4 +28,5 @@ spec:
         - "{{ .Values.scan.requestedBy }}"
         {{- if .Values.scan.uploadResults }}
         - "--upload"
+        {{- end }}
       restartPolicy: Never
