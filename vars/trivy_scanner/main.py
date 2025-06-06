@@ -11,7 +11,10 @@ from api_client import upload_vulnerabilities
 @click.option('--application', required=True, help='Application name to associate the scan with.')
 @click.option('--jenkins-job', required=True, help='Jenkins job name.')
 @click.option('--build-number', required=True, type=int, help='Jenkins build number.')
-def main(image, upload, application, jenkins_job, build_number):
+@click.option('--repo-url', required=True, help='GitHub repo URL associated with this image.')
+@click.option('--jenkins-url', required=True, help='Jenkins build URL.')
+@click.option('--requested-by', required=True, help='User who triggered the Jenkins job.')
+def main(image, upload, application, jenkins_job, build_number, repo_url, jenkins_url, requested_by):
     print(f"Scanning Docker image: {image}")
     scan_image(image)
 
@@ -22,7 +25,15 @@ def main(image, upload, application, jenkins_job, build_number):
         print(f"- {v.severity}: {v.package_name} ({v.vulnerability_id})")
 
     if upload:
-        upload_vulnerabilities(vulnerabilities, application, jenkins_job, build_number)
+        upload_vulnerabilities(
+            vulnerabilities,
+            application_name=application,
+            jenkins_job=jenkins_job,
+            build_number=build_number,
+            repo_url=repo_url,
+            jenkins_url=jenkins_url,
+            requested_by=requested_by
+        )
 
     # Fail pipeline on CRITICAL or HIGH
     blocking = [v for v in vulnerabilities if v.severity.upper() in {"CRITICAL", "HIGH"}]
