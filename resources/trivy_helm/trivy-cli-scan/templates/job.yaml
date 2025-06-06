@@ -26,4 +26,6 @@ spec:
         - "{{ .Values.scan.buildNumber }}"
         - "--requested-by"
         - "{{ .Values.scan.requestedBy }}"
+        {{- if .Values.scan.uploadResults }}
+        - "--upload"
       restartPolicy: Never
