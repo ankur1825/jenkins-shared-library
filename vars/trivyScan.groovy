@@ -14,6 +14,7 @@ def call(Map params = [:]) {
     echo "Starting Trivy Scan..."
     echo "Scanning Image: ${imageName}"
     echo "Upload Results: ${uploadResults}"
+    echo "Application: ${appName}"
 
     sh 'mkdir -p trivy-scan-workdir'
     dir('trivy-scan-workdir') {
