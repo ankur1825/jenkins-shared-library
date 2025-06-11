@@ -1,0 +1,21 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: sonarqube-config
+  namespace: horizon-relevance-dev
+data:
+  sonar.properties: |
+    sonar.security.realm=LDAP
+    ldap.url=ldaps://ldap.jumpcloud.com:636
+    ldap.bindDn=uid=ankur.kashyap,ou=Users,o=6817d9a0d50cd4b1b5b81ba7,dc=jumpcloud,dc=com
+    ldap.bindPassword=Durgabless78@
+
+    ldap.user.baseDn=ou=Users,o=6817d9a0d50cd4b1b5b81ba7,dc=jumpcloud,dc=com
+    ldap.user.request=(&(objectClass=inetOrgPerson)(uid={login}))
+
+    ldap.group.baseDn=ou=Groups,o=6817d9a0d50cd4b1b5b81ba7,dc=jumpcloud,dc=com
+    ldap.group.request=(&(objectClass=posixGroup)(memberUid={login}))
+    ldap.group.idAttribute=cn
+
+    ldap.group.admins=user-admins
+

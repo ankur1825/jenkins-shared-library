@@ -1,0 +1,137 @@
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: sonarqube
+  namespace: horizon-relevance-dev
+  labels:
+    app: sonarqube
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: sonarqube
+  template:
+    metadata:
+      labels:
+        app: sonarqube
+    spec:
+      nodeSelector:
+        kubernetes.io/os: linux  # Ensures pod is scheduled to trigger PVC binding
+      securityContext:
+        fsGroup: 1000
+        runAsUser: 1000
+      containers:
+        - name: sonarqube
+          image: sonarqube:10.4-community
+          ports:
+            - containerPort: 9000
+          env:
+            - name: SONAR_ES_BOOTSTRAP_CHECKS_DISABLE
+              value: "true"
+            - name: SONAR_WEB_CONTEXT
+              value: "/sonarqube"
+            # - name: LDAP_MANAGER_PASSWORD
+            #   valueFrom:
+            #     secretKeyRef:
+            #       name: jenkins-ldap 
+            #       key: password  
+          resources:
+            requests:
+              cpu: "250m"
+              memory: "2Gi"
+            limits:
+              cpu: "1"
+              memory: "3Gi"
+          volumeMounts:
+            - name: sonarqube-data
+              mountPath: /opt/sonarqube/data
+            - name: sonar-config
+              mountPath: /opt/sonarqube/conf/sonar.properties
+              subPath: sonar.properties    
+      volumes:
+        - name: sonarqube-data
+          persistentVolumeClaim:
+            claimName: sonarqube-pvc
+        - name: sonar-config
+          configMap:
+            name: sonarqube-config    
+---
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: sonarqube-pvc
+  namespace: horizon-relevance-dev
+spec:
+  accessModes:
+    - ReadWriteOnce
+  storageClassName: gp2
+  resources:
+    requests:
+      storage: 10Gi
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: sonarqube
+  namespace: horizon-relevance-dev
+spec:
+  selector:
+    app: sonarqube
+  ports:
+    - port: 9000
+      targetPort: 9000
+  type: ClusterIP
+---
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: sonarqube-ingress
+  namespace: horizon-relevance-dev
+  annotations:
+    nginx.ingress.kubernetes.io/rewrite-target: /sonarqube/$2
+    nginx.ingress.kubernetes.io/ssl-redirect: "true"
+    cert-manager.io/cluster-issuer: letsencrypt-prod
+spec:
+  ingressClassName: nginx
+  tls:
+    - hosts:
+      - horizonrelevance.com
+      secretName: sonarqube-tls
+  rules:
+    - host: horizonrelevance.com
+      http:
+        paths:
+          - path: /sonarqube(/|$)(.*)
+            pathType: ImplementationSpecific
+            backend:
+              service:
+                name: sonarqube
+                port:
+                  number: 9000
+
+# apiVersion: networking.k8s.io/v1
+# kind: Ingress
+# metadata:
+#   name: sonarqube-ingress
+#   namespace: horizon-relevance-dev
+#   annotations:
+#     nginx.ingress.kubernetes.io/rewrite-target: /sonarqube/$2
+#     nginx.ingress.kubernetes.io/ssl-redirect: "true"
+# spec:
+#   ingressClassName: nginx
+#   tls:
+#     - hosts:
+#         - horizonrelevance.com
+#       #secretName: ohatreact-tls
+#   rules:
+#     - host: horizonrelevance.com
+#       http:
+#         paths:
+#           - path: /sonarqube(/|$)(.*)
+#             pathType: ImplementationSpecific
+#             backend:
+#               service:
+#                 name: sonarqube
+#                 port:
+#                   number: 9000
