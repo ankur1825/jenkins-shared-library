@@ -12,9 +12,10 @@ def apply(Map m = [:]) {
   // Base names (Option B: unique plan per wave/tenant/env; shared vault)
   def basePlanName = m.plan_name ?: "maas-backup-plan-${suffix}"
   def vaultName    = m.vault_name ?: "maas-backup-vault"
+  def roleName     = m.iam_role_name ?: "maas-backup-role"  // used by import guard
 
   // ---- Enforce AWS length limits (50 total). Keep plan_name ≤ 40 so
-  //      "${plan_name}-selection" (10 chars) and "${plan_name}-daily" (6) stay valid.
+  //      "${plan_name}-selection" and "${plan_name}-daily" stay valid.
   final int PLAN_MAX = 40
   def safePlanName = basePlanName.length() > PLAN_MAX ? basePlanName.substring(0, PLAN_MAX) : basePlanName
 
@@ -57,8 +58,40 @@ def apply(Map m = [:]) {
   def tfvarsJson = groovy.json.JsonOutput.toJson(tfvars)
   echo "backupPlan tfvars: ${tfvarsJson}"
 
-  terraform.plan('orchestration/iac/stacks/aws/backup-plan', tfvarsJson)
-  terraform.apply('orchestration/iac/stacks/aws/backup-plan')
+  // ---------- Quick fix: import guard for pre-existing vault/role ----------
+  def stackDir    = 'orchestration/iac/stacks/aws/backup-plan'
+  def backendFile = "${env.WORKSPACE}/.tfbackend/backend.hcl"
+
+  sh """
+    set -euo pipefail
+    cd '${stackDir}'
+    # Ensure state backend is wired before import
+    terraform init -input=false -reconfigure -backend-config='${backendFile}' >/dev/null
+
+    VAULT_NAME='${vaultName}'
+    ROLE_NAME='${roleName}'
+
+    # Import vault if it exists in AWS but not in state
+    if ! terraform state show aws_backup_vault.src >/dev/null 2>&1; then
+      if aws backup describe-backup-vault --backup-vault-name "$VAULT_NAME" >/dev/null 2>&1; then
+        echo "Importing existing backup vault: $VAULT_NAME"
+        terraform import aws_backup_vault.src "$VAULT_NAME"
+      fi
+    fi
+
+    # Import IAM role if it exists in AWS but not in state
+    if ! terraform state show aws_iam_role.backup >/dev/null 2>&1; then
+      if aws iam get-role --role-name "$ROLE_NAME" >/dev/null 2>&1; then
+        echo "Importing existing IAM role: $ROLE_NAME"
+        terraform import aws_iam_role.backup "$ROLE_NAME"
+      fi
+    fi
+  """
+  // -------------------------------------------------------------------------
+
+  terraform.plan(stackDir, tfvarsJson)
+  terraform.apply(stackDir)
 }
 
 return this
+
