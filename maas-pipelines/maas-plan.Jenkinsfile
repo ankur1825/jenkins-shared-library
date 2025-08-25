@@ -23,10 +23,13 @@ pipeline {
       }
     }
     stage('Checkout IaC') {
-      steps {
-        script { terraform.checkoutModules(env.IAC_REPO, env.IAC_REF, env.GITHUB_CRED) }
-      }
+  steps {
+    script {
+      terraform.checkoutModules(env.IAC_REPO, env.IAC_REF, env.GITHUB_CRED, '.')
+      env.IAC_DIR = '.'   // (kept for consistency; not strictly used by mgn.plan)
     }
+  }
+}
     stage('Plan per Placement') {
       steps {
         script {
