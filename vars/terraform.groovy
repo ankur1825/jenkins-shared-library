@@ -11,11 +11,13 @@ dynamodb_table = "${b.table}"
   body()
 }
 
-def checkoutModules(String repo, String ref) {
-  checkout([$class: 'GitSCM',
-    branches: [[name: ref]],
-    userRemoteConfigs: [[url: repo, credentialsId: 'github-token']]
-  ])
+def checkoutModules(String repo, String ref, String credId, String dirName = 'iac') {
+  dir(dirName) {
+    checkout([$class: 'GitSCM',
+      branches: [[name: ref]],
+      userRemoteConfigs: [[url: repo, credentialsId: credId]]
+    ])
+  }
 }
 
 def plan(String dir, String tfvarsJson) {
