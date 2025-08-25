@@ -11,7 +11,7 @@ dynamodb_table = "${b.table}"
   body()
 }
 
-def checkoutModules(String repo, String ref, String credId, String dirName = 'iac') {
+def checkoutModules(String repo, String ref, String credId, String dirName = '.') {
   dir(dirName) {
     checkout([$class: 'GitSCM',
       branches: [[name: ref]],
@@ -21,10 +21,11 @@ def checkoutModules(String repo, String ref, String credId, String dirName = 'ia
 }
 
 def plan(String dir, String tfvarsJson) {
+  def backendCfg = "${env.WORKSPACE}/.tfbackend/backend.hcl"
   sh """
     cd '${dir}'
     terraform --version
-    terraform init -input=false -backend-config=../../.tfbackend/backend.hcl
+    terraform init -input=false -backend-config='${backendCfg}'
     echo '${tfvarsJson}' > wave.auto.tfvars.json
     terraform plan -input=false -out=plan.tfplan
   """
