@@ -21,11 +21,13 @@ def checkoutModules(String repo, String ref, String credId, String dirName = '.'
 }
 
 def plan(String dir, String tfvarsJson) {
-  def backendCfg = "${env.WORKSPACE}/.tfbackend/backend.hcl"
   sh """
     cd '${dir}'
+    # optional but keeps things clean if the backend changed
+    rm -rf .terraform
     terraform --version
-    terraform init -input=false -backend-config='${backendCfg}'
+    terraform init -input=false -reconfigure \\
+      -backend-config='${env.WORKSPACE}/.tfbackend/backend.hcl'
     echo '${tfvarsJson}' > wave.auto.tfvars.json
     terraform plan -input=false -out=plan.tfplan
   """
@@ -34,6 +36,8 @@ def plan(String dir, String tfvarsJson) {
 def apply(String dir) {
   sh """
     cd '${dir}'
+    terraform init -input=false -reconfigure \\
+      -backend-config='${env.WORKSPACE}/.tfbackend/backend.hcl'
     terraform apply -input=false -auto-approve plan.tfplan || terraform apply -input=false -auto-approve
   """
 }
