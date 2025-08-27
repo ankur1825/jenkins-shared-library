@@ -2,43 +2,70 @@
 pipeline {
   agent any
   options { timestamps(); ansiColor('xterm') }
+
   parameters {
-    string(name: 'IAC_REF', defaultValue: 'main', description: 'IaC ref (tag/branch)')
-    string(name: 'WAVE_ID', defaultValue: '', description: 'Wave ID')
-    text(name: 'WAVE_JSON', defaultValue: '', description: 'Wave document (JSON)')
-    text(name: 'TENANT_CONTEXT', defaultValue: '', description: 'Tenant + placements (JSON)')
+    string(name: 'IAC_REF',        defaultValue: 'main', description: 'IaC ref (tag/branch)')
+    string(name: 'WAVE_ID',        defaultValue: '',     description: 'Wave ID')
+    string(name: 'WAVE_JSON',      defaultValue: '{}',   description: 'Wave JSON (plain or base64)')
+    string(name: 'TENANT_CONTEXT', defaultValue: '{}',   description: 'Tenant context JSON (plain or base64)')
   }
+
   environment {
-    IAC_REPO = 'https://github.com/ankur1825/Self-Service-CICD-Pipeline-backend-multicloud.git' //new backend repo has to be replaced 
-    IAC_REF  = "${params.IAC_REF}"                                  //'v0.1.0'
+    IAC_REPO    = 'https://github.com/ankur1825/Self-Service-CICD-Pipeline-backend-multicloud.git'
+    IAC_REF     = "${params.IAC_REF}"
     GITHUB_CRED = 'github-token'
   }
+
   stages {
     stage('Parse Inputs') {
       steps {
         script {
-          wave = readJSON text: params.WAVE_JSON
-          tenantCtx = readJSON text: params.TENANT_CONTEXT
+          def parseJsonParam = { String v ->
+            def s = (v ?: '').trim()
+            if (!s) return [:]
+            // accept base64 too, if backend chooses to send it later
+            if ((s ==~ /^[A-Za-z0-9+\/=\s]+$/) && s.endsWith('=')) {
+              try { s = new String(s.decodeBase64(), 'UTF-8') } catch (ignored) {}
+            }
+            try { readJSON text: s } catch (e) { echo "JSON parse failed (len=${s.size()}): ${e}"; [:] }
+          }
+
+          def wave       = parseJsonParam(params.WAVE_JSON)
+          def tenantCtx  = parseJsonParam(params.TENANT_CONTEXT)
+
+          // keep them scoped for later stages
+          currentBuild.description = "wave=${params.WAVE_ID} placements=${wave?.placements?.size() ?: 0}"
+          echo "wave targets=${wave?.targets?.size() ?: 0}, placements=${wave?.placements?.size() ?: 0}"
+          echo "tenantCtx placements=${tenantCtx?.placements?.size() ?: 0}"
+
+          // expose for later usage
+          env.__WAVE_JSON      = groovy.json.JsonOutput.toJson(wave)
+          env.__TENANT_CONTEXT = groovy.json.JsonOutput.toJson(tenantCtx)
         }
       }
     }
+
     stage('Checkout IaC') {
-      steps {
-        script { terraform.checkoutModules(env.IAC_REPO, env.IAC_REF, env.GITHUB_CRED) }
-      }
+      steps { script { terraform.checkoutModules(env.IAC_REPO, env.IAC_REF, env.GITHUB_CRED) } }
     }
+
     stage('Apply per Placement') {
+      when { expression { readJSON(text: env.__WAVE_JSON).placements?.size() > 0 } }
       steps {
         script {
+          def wave      = readJSON(text: env.__WAVE_JSON)
+          def tenantCtx = readJSON(text: env.__TENANT_CONTEXT)
+
           for (pl in wave.placements) {
             if (pl.provider != 'aws') { echo "Skip ${pl.provider}"; continue }
             def acc = tenantCtx.placements.find { it.id == pl.id }?.account
-            if (!acc) error "No account context for placement ${pl.id}"
+            if (!acc) { error "No account context for placement ${pl.id}" }
 
-            withAwsTenant(roleArn: acc.role_arn, externalId: acc.external_id, region: acc.region ?: pl.params.region) {
+            def region = acc.region ?: pl.params.region
+            withAwsTenant(roleArn: acc.role_arn, externalId: acc.external_id, region: region) {
               terraform.withBackend(bucket: acc.state_bucket, table: acc.lock_table,
                                     prefix: "waves/${params.WAVE_ID}/${pl.id}",
-                                    region: acc.region ?: pl.params.region) {
+                                    region: region) {
                 mgn.execute(dir: 'aws/ec2-liftshift', wave: wave, placement: pl)
               }
             }
