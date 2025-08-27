@@ -6,14 +6,14 @@ pipeline {
   parameters {
     string(name: 'IAC_REF',        defaultValue: 'main', description: 'IaC ref (tag/branch)')
     string(name: 'WAVE_ID',        defaultValue: '',     description: 'Wave ID')
-    string(name: 'WAVE_JSON',      defaultValue: '{}',   description: 'Wave JSON (plain or base64)')
-    string(name: 'TENANT_CONTEXT', defaultValue: '{}',   description: 'Tenant context JSON (plain or base64)')
+    text  (name: 'WAVE_JSON',      defaultValue: '{}',   description: 'Wave JSON (plain or base64)')
+    text  (name: 'TENANT_CONTEXT', defaultValue: '{}',   description: 'Tenant context JSON (plain or base64)')
   }
 
   environment {
     IAC_REPO    = 'https://github.com/ankur1825/Self-Service-CICD-Pipeline-backend-multicloud.git'
     IAC_REF     = "${params.IAC_REF}"
-    GITHUB_CRED = 'github-token'
+    GITHUB_CRED = 'github-user'   // match maas-plan (fixes “CredentialId ... not found”)
   }
 
   stages {
@@ -23,22 +23,18 @@ pipeline {
           def parseJsonParam = { String v ->
             def s = (v ?: '').trim()
             if (!s) return [:]
-            // accept base64 too, if backend chooses to send it later
-            if ((s ==~ /^[A-Za-z0-9+\/=\s]+$/) && s.endsWith('=')) {
+            if ((s ==~ /^[A-Za-z0-9+\/=\s]+$/) && s.endsWith('=')) {  // allow base64
               try { s = new String(s.decodeBase64(), 'UTF-8') } catch (ignored) {}
             }
             try { readJSON text: s } catch (e) { echo "JSON parse failed (len=${s.size()}): ${e}"; [:] }
           }
+          def wave      = parseJsonParam(params.WAVE_JSON)
+          def tenantCtx = parseJsonParam(params.TENANT_CONTEXT)
 
-          def wave       = parseJsonParam(params.WAVE_JSON)
-          def tenantCtx  = parseJsonParam(params.TENANT_CONTEXT)
-
-          // keep them scoped for later stages
           currentBuild.description = "wave=${params.WAVE_ID} placements=${wave?.placements?.size() ?: 0}"
           echo "wave targets=${wave?.targets?.size() ?: 0}, placements=${wave?.placements?.size() ?: 0}"
           echo "tenantCtx placements=${tenantCtx?.placements?.size() ?: 0}"
 
-          // expose for later usage
           env.__WAVE_JSON      = groovy.json.JsonOutput.toJson(wave)
           env.__TENANT_CONTEXT = groovy.json.JsonOutput.toJson(tenantCtx)
         }
@@ -46,7 +42,13 @@ pipeline {
     }
 
     stage('Checkout IaC') {
-      steps { script { terraform.checkoutModules(env.IAC_REPO, env.IAC_REF, env.GITHUB_CRED) } }
+      steps {
+        script {
+          // same as maas-plan, so folder structure matches
+          terraform.checkoutModules(env.IAC_REPO, env.IAC_REF, env.GITHUB_CRED, '.')
+          env.IAC_DIR = '.'
+        }
+      }
     }
 
     stage('Apply per Placement') {
@@ -66,7 +68,8 @@ pipeline {
               terraform.withBackend(bucket: acc.state_bucket, table: acc.lock_table,
                                     prefix: "waves/${params.WAVE_ID}/${pl.id}",
                                     region: region) {
-                mgn.execute(dir: 'aws/ec2-liftshift', wave: wave, placement: pl)
+                // mgn.execute now uses the full path internally
+                mgn.execute(wave: wave, placement: pl)
               }
             }
           }
