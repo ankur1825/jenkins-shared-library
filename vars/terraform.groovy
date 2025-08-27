@@ -35,4 +35,19 @@ def apply(String dir) {
   """
 }
 
+def destroy(String dir, String tfvarsJson) {
+  sh """
+    set -e
+    cd '${dir}'
+    terraform --version
+    # Use the same backend file your plan/apply uses
+    terraform init -input=false -reconfigure -backend-config=../../.tfbackend/backend.hcl
+    # Recreate the same tfvars the stacks expect
+    cat > wave.auto.tfvars.json <<'JSON'
+${tfvarsJson}
+JSON
+    terraform destroy -input=false -auto-approve
+  """
+}
+
 return this

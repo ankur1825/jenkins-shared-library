@@ -40,6 +40,24 @@ RUN curl "https://awscli.amazonaws.com/awscli-exe-linux-x86_64.zip" -o "/tmp/aws
     /tmp/aws/install && \
     rm -rf /tmp/aws /tmp/awscliv2.zip
 
+# ─────────────────────────────────────────────────────────────────────
+# Install Terraform (pinned)
+# ─────────────────────────────────────────────────────────────────────
+ARG TF_VERSION=1.7.7
+ENV TF_IN_AUTOMATION=1
+RUN set -eux; \
+    arch="$(dpkg --print-architecture)"; \
+    case "$arch" in \
+      amd64) tf_arch=linux_amd64 ;; \
+      arm64) tf_arch=linux_arm64 ;; \
+      *) echo "Unsupported architecture: $arch" >&2; exit 1 ;; \
+    esac; \
+    curl -fsSLo /tmp/terraform.zip "https://releases.hashicorp.com/terraform/${TF_VERSION}/terraform_${TF_VERSION}_${tf_arch}.zip"; \
+    unzip -o /tmp/terraform.zip -d /usr/local/bin; \
+    chmod +x /usr/local/bin/terraform; \
+    rm -f /tmp/terraform.zip; \
+    terraform -version    
+
 # Copy Groovy admin setup script
 COPY security.groovy /usr/share/jenkins/ref/init.groovy.d/security.groovy
 
