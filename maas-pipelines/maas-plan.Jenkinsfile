@@ -11,7 +11,7 @@ pipeline {
   environment {
     IAC_REPO = 'https://github.com/ankur1825/Self-Service-CICD-Pipeline-backend-multicloud.git' //new backend repo has to be replaced 
     IAC_REF  = "${params.IAC_REF}"                                  //'v0.1.0'
-    GITHUB_CRED = 'github-token'
+    GITHUB_CRED = 'github-user'
   }
   stages {
     stage('Parse Inputs') {
@@ -23,10 +23,13 @@ pipeline {
       }
     }
     stage('Checkout IaC') {
-      steps {
-        script { terraform.checkoutModules(env.IAC_REPO, env.IAC_REF, env.GITHUB_CRED) }
-      }
+  steps {
+    script {
+      terraform.checkoutModules(env.IAC_REPO, env.IAC_REF, env.GITHUB_CRED, '.')
+      env.IAC_DIR = '.'   // (kept for consistency; not strictly used by mgn.plan)
     }
+  }
+}
     stage('Plan per Placement') {
       steps {
         script {
