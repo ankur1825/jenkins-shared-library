@@ -8,8 +8,27 @@ import groovy.json.JsonOutput
 @Field final String STACK_DIR = 'orchestration/iac/stacks/aws/ec2-liftshift'
 
 // ------------------------------
-// Terraform helpers (unchanged)
+// Path + tfvars helpers
 // ------------------------------
+
+/** Resolve the stack directory against env.IAC_DIR (if set) and sanity-check it. */
+private String resolveStackDir(String overrideDir) {
+  def base  = (env.IAC_DIR ?: '.').trim()
+  def rel   = (overrideDir ?: STACK_DIR).trim()
+  def stack = "${base}/${rel}".replaceAll('/+', '/')
+
+  echo "Using IaC stack dir: ${stack}"
+  // Helpful diagnostics in logs
+  sh "ls -la ${stack} || true"
+
+  // Require at least one .tf file to avoid "empty directory" terraform errors
+  def hasTf = (sh(returnStatus: true, script: "ls ${stack}/*.tf >/dev/null 2>&1") == 0)
+  if (!hasTf) {
+    error "No Terraform files found under '${stack}'. Check your repo path. (IAC_DIR='${base}', rel='${rel}')"
+  }
+  return stack
+}
+
 private Map makeTfvars(wave, pl) {
   def p = pl.params
   return [
@@ -29,21 +48,25 @@ private Map makeTfvars(wave, pl) {
   ]
 }
 
+// ------------------------------
+// Terraform entrypoints
+// ------------------------------
+
 def plan(Map m = [:]) {
-  def stack = (m.dir ?: STACK_DIR)
+  def stack  = resolveStackDir(m.dir)
   def tfvars = makeTfvars(m.wave, m.placement)
   terraform.plan(stack, JsonOutput.toJson(tfvars))
 }
 
 def execute(Map m = [:]) {
-  def stack = (m.dir ?: STACK_DIR)
+  def stack  = resolveStackDir(m.dir)
   def tfvars = makeTfvars(m.wave, m.placement)
   writeFile file: "${stack}/wave.auto.tfvars.json", text: JsonOutput.toJson(tfvars)
   terraform.apply(stack)
 }
 
 def destroy(Map m = [:]) {
-  def stack = (m.dir ?: STACK_DIR)
+  def stack  = resolveStackDir(m.dir)
   def tfvars = makeTfvars(m.wave, m.placement)
   terraform.destroy(stack, JsonOutput.toJson(tfvars))
 }
@@ -65,7 +88,7 @@ private List<String> linuxInstallCommands(String destRegion) {
   ]
 }
 
-/** Quiet installer for Windows targeting the DEST region */
+/** Quiet installer for Windows targeting the DEST region (safe from Groovy `$` interpolation) */
 private String windowsInstallCommands(String destRegion) {
   return (
     '''$ErrorActionPreference='Stop'

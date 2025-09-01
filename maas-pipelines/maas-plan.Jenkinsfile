@@ -44,7 +44,7 @@ pipeline {
               terraform.withBackend(bucket: acc.state_bucket, table: acc.lock_table,
                                     prefix: "waves/${params.WAVE_ID}/${pl.id}",
                                     region: acc.region ?: pl.params.region) {
-                mgn.plan(dir: 'aws/ec2-liftshift', wave: wave, placement: pl)
+                mgn.plan( /* no dir param */ wave: wave, placement: pl )
                 if (pl.params.attach_backup) {
                   backupPlan.apply(tags: pl.params.tags, kmsAlias: pl.params.kms_key_alias, copyToRegion: pl.params.copy_to_region)
                 }
