@@ -67,13 +67,14 @@ private List<String> linuxInstallCommands(String destRegion) {
 
 /** Quiet installer for Windows targeting the DEST region */
 private String windowsInstallCommands(String destRegion) {
-  return """
-  \$ErrorActionPreference='Stop'
-  \$u  = 'https://aws-application-migration-service-${destRegion}.s3.${destRegion}.amazonaws.com/latest/windows/AWSReplicationWindowsInstaller.exe'
-  \$dst = "\$env:TEMP\\AWSReplicationWindowsInstaller.exe"
-  Invoke-WebRequest -Uri \$u -OutFile \$dst
-  & \$dst /quiet /norestart /log "\$env:TEMP\\mgn-install.log" /region ${destRegion}
-  """.stripIndent().trim()
+  return (
+    '''$ErrorActionPreference='Stop'
+$u  = 'https://aws-application-migration-service-''' + destRegion + '''.s3.''' + destRegion + '''.amazonaws.com/latest/windows/AWSReplicationWindowsInstaller.exe'
+$dst = "$env:TEMP\\AWSReplicationWindowsInstaller.exe"
+Invoke-WebRequest -Uri $u -OutFile $dst
+& $dst /quiet /norestart /log "$env:TEMP\\mgn-install.log" /region ''' + destRegion + '''
+'''
+  ).stripIndent().trim()
 }
 
 /** Resolve a mix of instanceIds and Name tags into instanceIds */
@@ -83,13 +84,14 @@ private List<String> resolveInstanceIds(String srcRegion, List<String> idsOrName
 
   if (names) {
     def namesCsv = names.collect { it.replaceAll(',', '\\\\,') }.join(',')
-    def json = sh(returnStdout: true, script: """
-      aws ec2 describe-instances \
-        --region ${srcRegion} \
-        --filters Name=tag:Name,Values=${namesCsv} \
+    def json = sh(returnStdout: true, script:
+      '''aws ec2 describe-instances \
+        --region ''' + srcRegion + ''' \
+        --filters Name=tag:Name,Values=''' + namesCsv + ''' \
         --query 'Reservations[].Instances[].InstanceId' \
         --output json
-    """).trim()
+      '''
+    ).trim()
     def more = (new JsonSlurper().parseText(json) ?: []) as List
     ids.addAll(more)
   }
@@ -98,20 +100,18 @@ private List<String> resolveInstanceIds(String srcRegion, List<String> idsOrName
 
 /** Create MGN service-linked role if missing and check SSM connectivity. */
 def ensureMgnPrereqs(Map args) {
-  def accountRef = args.accountRef
-  def region     = args.region
+  def accountRef  = args.accountRef
+  def region      = args.region
   def instanceIds = (args.instanceIds ?: []) as List<String>
 
   withAwsTenant(accountRef: accountRef, region: region) {
     // Service-linked role
-    def roleOk = sh(returnStatus: true, script: """
-      aws iam get-role --role-name AWSServiceRoleForApplicationMigrationService >/dev/null 2>&1
-    """) == 0
+    def roleOk = sh(returnStatus: true, script:
+      '''aws iam get-role --role-name AWSServiceRoleForApplicationMigrationService >/dev/null 2>&1'''
+    ) == 0
     if (!roleOk) {
       echo "Creating MGN service-linked role..."
-      sh """
-        aws iam create-service-linked-role --aws-service-name mgn.amazonaws.com
-      """
+      sh('''aws iam create-service-linked-role --aws-service-name mgn.amazonaws.com''')
     } else {
       echo "MGN service-linked role exists."
     }
@@ -119,11 +119,12 @@ def ensureMgnPrereqs(Map args) {
     // Basic SSM reachability (are these instances managed?)
     if (instanceIds) {
       writeFile file: 'ids.json', text: JsonOutput.toJson(instanceIds)
-      def info = sh(returnStdout: true, script: """
-        aws ssm describe-instance-information --region ${region} \
+      def info = sh(returnStdout: true, script:
+        '''aws ssm describe-instance-information --region ''' + region + ''' \
           --instance-information-filter-list '[{"key":"InstanceIds","valueSet":'$(cat ids.json)'}]' \
           --query 'InstanceInformationList[].InstanceId' --output json
-      """).trim()
+        '''
+      ).trim()
       def managed = (new JsonSlurper().parseText(info) ?: []) as List
       def unmanaged = (instanceIds as Set) - (managed as Set)
       if (unmanaged) {
@@ -196,11 +197,12 @@ def installAgentOnEc2(Map args) {
 
     // Classify OS using SSM inventory (unknowns default to Linux)
     writeFile file: 'ids.json', text: JsonOutput.toJson(instanceIds)
-    def invJson = sh(returnStdout: true, script: """
-      aws ssm describe-instance-information --region ${srcRegion} \
+    def invJson = sh(returnStdout: true, script:
+      '''aws ssm describe-instance-information --region ''' + srcRegion + ''' \
         --instance-information-filter-list '[{"key":"InstanceIds","valueSet":'$(cat ids.json)'}]' \
         --query 'InstanceInformationList[].{Id:InstanceId,Platform:PlatformType}' --output json
-    """).trim()
+      '''
+    ).trim()
     def info = (new JsonSlurper().parseText(invJson) ?: []) as List
     def linuxIds   = info.findAll { (it.Platform ?: '').toString().toLowerCase().contains('linux') }.collect { it.Id }
     def windowsIds = info.findAll { (it.Platform ?: '').toString().toLowerCase().contains('windows') }.collect { it.Id }
