@@ -113,6 +113,12 @@ def execute(Map m = [:]) {
   def stack  = resolveStackDir(m.dir)
   def tfvars = makeTfvars(m.wave, m.placement)
 
+  // --- NEW: If this placement defines a source EC2, install the MGN agent first.
+  if (m?.placement?.params?.source?.type == 'aws-ec2') {
+    echo "Installing MGN agent for placement ${m.placement.id}..."
+    installAgentFromWave(wave: m.wave, placement: m.placement)
+  }
+
   // Ensure TF has the same tfvars file that 'plan' would write
   writeFile file: "${stack}/wave.auto.tfvars.json", text: JsonOutput.toJson(tfvars)
 
@@ -120,7 +126,7 @@ def execute(Map m = [:]) {
   def backendCfg = "${pwd()}/.tfbackend/backend.hcl"
   importExistingInfra(stack, (tfvars.region ?: ''), backendCfg)
 
-  // Now create a plan (via the shared helper) and then apply it
+  // Create a plan then apply
   terraform.plan(stack, JsonOutput.toJson(tfvars))
   terraform.apply(stack)
 }
