@@ -2,7 +2,6 @@
 // Terraform orchestration + MGN agent install helpers for lift-and-shift waves.
 
 import groovy.transform.Field
-import groovy.json.JsonSlurper
 import groovy.json.JsonOutput
 
 @Field final String STACK_DIR = 'orchestration/iac/stacks/aws/ec2-liftshift'
@@ -18,10 +17,8 @@ private String resolveStackDir(String overrideDir) {
   def stack = "${base}/${rel}".replaceAll('/+', '/')
 
   echo "Using IaC stack dir: ${stack}"
-  // Helpful diagnostics in logs
   sh "ls -la ${stack} || true"
 
-  // Require at least one .tf file to avoid "empty directory" terraform errors
   def hasTf = (sh(returnStatus: true, script: "ls ${stack}/*.tf >/dev/null 2>&1") == 0)
   if (!hasTf) {
     error "No Terraform files found under '${stack}'. Check your repo path. (IAC_DIR='${base}', rel='${rel}')"
@@ -49,58 +46,55 @@ private Map makeTfvars(wave, pl) {
 }
 
 // ------------------------------
-// Import-if-exists helper (idempotency for ALB/TG/LT)
+// Import-if-exists helper (ALB/TG/LT)
 // ------------------------------
 
 /**
  * Import existing infra (by well-known names) into the current TF state
  * so that re-runs are idempotent.
- * Looks up resources in the given region and imports them if found.
+ * Uses AWS CLI --query/--output text to avoid non-serializable JSON maps.
  */
 private void importExistingInfra(String stack, String region, String backendCfgPath) {
   dir(stack) {
-    // Ensure backend is configured so imports target the right state
-    sh """
-      terraform init -input=false -reconfigure -backend-config=${backendCfgPath}
-    """
+    // Make sure we’re pointed at the right backend before importing
+    sh "terraform init -input=false -reconfigure -backend-config=${backendCfgPath}"
+
+    // Helper to check if a resource is already in state
+    def inState = { String addr ->
+      return sh(returnStatus: true, script: "terraform state show ${addr} >/dev/null 2>&1") == 0
+    }
 
     // --- ALB (name: maas-alb)
-    def albJson = sh(returnStdout: true, script: """
-      aws elbv2 describe-load-balancers --region ${region} --names maas-alb --output json 2>/dev/null || true
+    def albArn = sh(returnStdout: true, script: """
+      aws elbv2 describe-load-balancers \
+        --region ${region} --names maas-alb \
+        --query 'LoadBalancers[0].LoadBalancerArn' --output text 2>/dev/null || true
     """).trim()
-    if (albJson) {
-      def parsed = new JsonSlurper().parseText(albJson)
-      def albArn = parsed?.LoadBalancers?.getAt(0)?.LoadBalancerArn
-      if (albArn) {
-        echo "Importing existing ALB into state: ${albArn}"
-        sh "terraform import -input=false aws_lb.app ${albArn} || true"
-      }
+    if (albArn && albArn != 'None' && !inState('aws_lb.app')) {
+      echo "Importing existing ALB into state: ${albArn}"
+      sh "terraform import -input=false aws_lb.app ${albArn} || true"
     }
 
     // --- Target Group (name: maas-tg-prod)
-    def tgJson = sh(returnStdout: true, script: """
-      aws elbv2 describe-target-groups --region ${region} --names maas-tg-prod --output json 2>/dev/null || true
+    def tgArn = sh(returnStdout: true, script: """
+      aws elbv2 describe-target-groups \
+        --region ${region} --names maas-tg-prod \
+        --query 'TargetGroups[0].TargetGroupArn' --output text 2>/dev/null || true
     """).trim()
-    if (tgJson) {
-      def parsed = new JsonSlurper().parseText(tgJson)
-      def tgArn = parsed?.TargetGroups?.getAt(0)?.TargetGroupArn
-      if (tgArn) {
-        echo "Importing existing Target Group into state: ${tgArn}"
-        sh "terraform import -input=false aws_lb_target_group.prod ${tgArn} || true"
-      }
+    if (tgArn && tgArn != 'None' && !inState('aws_lb_target_group.prod')) {
+      echo "Importing existing Target Group into state: ${tgArn}"
+      sh "terraform import -input=false aws_lb_target_group.prod ${tgArn} || true"
     }
 
-    // --- Launch Template (name prefix: maas-lt-)
-    def ltJson = sh(returnStdout: true, script: """
-      aws ec2 describe-launch-templates --region ${region} --filters Name=launch-template-name,Values=maas-lt-* --output json 2>/dev/null || true
+    // --- Launch Template (first matching name: maas-lt-*)
+    def ltId = sh(returnStdout: true, script: """
+      aws ec2 describe-launch-templates \
+        --region ${region} --filters Name=launch-template-name,Values=maas-lt-* \
+        --query 'LaunchTemplates[0].LaunchTemplateId' --output text 2>/dev/null || true
     """).trim()
-    if (ltJson) {
-      def parsed = new JsonSlurper().parseText(ltJson)
-      def ltId = parsed?.LaunchTemplates?.getAt(0)?.LaunchTemplateId
-      if (ltId) {
-        echo "Importing existing Launch Template into state: ${ltId}"
-        sh "terraform import -input=false aws_launch_template.lt ${ltId} || true"
-      }
+    if (ltId && ltId != 'None' && !inState('aws_launch_template.lt')) {
+      echo "Importing existing Launch Template into state: ${ltId}"
+      sh "terraform import -input=false aws_launch_template.lt ${ltId} || true"
     }
   }
 }
@@ -119,19 +113,15 @@ def execute(Map m = [:]) {
   def stack  = resolveStackDir(m.dir)
   def tfvars = makeTfvars(m.wave, m.placement)
 
-  // Write tfvars for this run
+  // Ensure TF has the same tfvars file that 'plan' would write
   writeFile file: "${stack}/wave.auto.tfvars.json", text: JsonOutput.toJson(tfvars)
 
-  // Import existing resources (ALB/TG/LT) so apply is idempotent
+  // Import existing resources (ALB/TG/LT) so first apply is idempotent
   def backendCfg = "${pwd()}/.tfbackend/backend.hcl"
   importExistingInfra(stack, (tfvars.region ?: ''), backendCfg)
 
-  // Create a plan file so terraform.apply can use it if it expects plan.tfplan
-  dir(stack) {
-    sh "terraform plan -input=false -out=plan.tfplan || true"
-  }
-
-  // Apply (wrapper will use plan.tfplan when present)
+  // Now create a plan (via the shared helper) and then apply it
+  terraform.plan(stack, JsonOutput.toJson(tfvars))
   terraform.apply(stack)
 }
 
@@ -185,7 +175,7 @@ private List<String> resolveInstanceIds(String srcRegion, List<String> idsOrName
         --output json
       '''
     ).trim()
-    def more = (new JsonSlurper().parseText(json) ?: []) as List
+    def more = (new groovy.json.JsonSlurperClassic().parseText(json) ?: []) as List
     ids.addAll(more)
   }
   return ids.unique()
@@ -218,7 +208,7 @@ def ensureMgnPrereqs(Map args) {
           --query 'InstanceInformationList[].InstanceId' --output json
         '''
       ).trim()
-      def managed = (new JsonSlurper().parseText(info) ?: []) as List
+      def managed = (new groovy.json.JsonSlurperClassic().parseText(info) ?: []) as List
       def unmanaged = (instanceIds as Set) - (managed as Set)
       if (unmanaged) {
         echo "WARNING: These instances are not managed by SSM (no agent/role or no connectivity): ${unmanaged}"
@@ -241,7 +231,7 @@ private String sendSsm(String region, List<String> instanceIds, String docName, 
       --comment "Install MGN agent" \
       --output json
   """).trim()
-  def cmdId = (new JsonSlurper().parseText(out)).Command.CommandId
+  def cmdId = (new groovy.json.JsonSlurperClassic().parseText(out)).Command.CommandId
   echo "SSM commandId=${cmdId}"
 
   if (!wait) return cmdId
@@ -252,7 +242,7 @@ private String sendSsm(String region, List<String> instanceIds, String docName, 
         aws ssm list-command-invocations --region ${region} \
           --command-id ${cmdId} --details --output json
       """).trim()
-      def statuses = (new JsonSlurper().parseText(inv)).CommandInvocations*.Status
+      def statuses = (new groovy.json.JsonSlurperClassic().parseText(inv)).CommandInvocations*.Status
       echo "SSM statuses=${statuses}"
       return statuses && statuses.every { it in ['Success','Cancelled','Failed','TimedOut'] }
     }
@@ -262,11 +252,6 @@ private String sendSsm(String region, List<String> instanceIds, String docName, 
 
 /**
  * Install the MGN agent on a set of *source* EC2 instances via SSM.
- * args:
- *   srcAccountRef  - tenant accountRef for the *source* account (can be same as target)
- *   srcRegion      - region where the source EC2s live
- *   destRegion     - region you are migrating *to*
- *   idsOrNames     - ['i-0abc…', 'app01', ...] (mix allowed)
  */
 def installAgentOnEc2(Map args) {
   def srcAccountRef = args.srcAccountRef
@@ -285,10 +270,8 @@ def installAgentOnEc2(Map args) {
     }
     echo "Will install MGN agent on: ${instanceIds}"
 
-    // Ensure service-linked role and sanity-check SSM
     ensureMgnPrereqs(accountRef: srcAccountRef, region: srcRegion, instanceIds: instanceIds)
 
-    // Classify OS using SSM inventory (unknowns default to Linux)
     writeFile file: 'ids.json', text: JsonOutput.toJson(instanceIds)
     def invJson = sh(returnStdout: true, script:
       '''aws ssm describe-instance-information --region ''' + srcRegion + ''' \
@@ -296,14 +279,13 @@ def installAgentOnEc2(Map args) {
         --query 'InstanceInformationList[].{Id:InstanceId,Platform:PlatformType}' --output json
       '''
     ).trim()
-    def info = (new JsonSlurper().parseText(invJson) ?: []) as List
+    def info = (new groovy.json.JsonSlurperClassic().parseText(invJson) ?: []) as List
     def linuxIds   = info.findAll { (it.Platform ?: '').toString().toLowerCase().contains('linux') }.collect { it.Id }
     def windowsIds = info.findAll { (it.Platform ?: '').toString().toLowerCase().contains('windows') }.collect { it.Id }
     def known = (linuxIds + windowsIds) as Set
     def unknown = instanceIds.findAll { !(it in known) }
     linuxIds.addAll(unknown)
 
-    // Chunk to avoid SSM 50-target limits
     def chunk = { List l, int n -> l.collate(n) }
     if (linuxIds) {
       def cmds = linuxInstallCommands(destRegion)
@@ -316,10 +298,7 @@ def installAgentOnEc2(Map args) {
   }
 }
 
-/**
- * Convenience wrapper: read wave/placement shape and install the agent
- * when placement.params.source = [type:'aws-ec2', account_ref:'...', region:'...', server_ids:['app01','i-...']]
- */
+/** Convenience wrapper: reads wave/placement and installs the agent if defined. */
 def installAgentFromWave(Map m = [:]) {
   def wave = m.wave
   def pl   = m.placement
