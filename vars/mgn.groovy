@@ -195,6 +195,27 @@ def ensureMgnPrereqs(Map args) {
   def region      = args.region
   def instanceIds = (args.instanceIds ?: []) as List<String>
 
+  // Check if SLR exists
+  def getRc = sh(returnStatus: true, script:
+    '''aws iam get-role --role-name AWSServiceRoleForApplicationMigrationService >/dev/null 2>&1'''
+  )
+
+  if (getRc == 0) {
+    echo "MGN service-linked role exists."
+  } else {
+    echo "MGN service-linked role not found; attempting to create..."
+    // Try create, but don't fail the build if we're not allowed
+    def createRc = sh(returnStatus: true, script:
+      '''aws iam create-service-linked-role --aws-service-name mgn.amazonaws.com >/dev/null 2>&1'''
+    )
+    if (createRc == 0) {
+      echo "Created MGN service-linked role."
+    } else {
+      echo "WARNING: Could not create MGN service-linked role (likely missing iam:CreateServiceLinkedRole)."
+      echo "WARNING: Proceeding anyway; ensure the SLR exists for MGN to replicate."
+    }
+  }
+  
   def roleOk = sh(returnStatus: true, script:
     '''aws iam get-role --role-name AWSServiceRoleForApplicationMigrationService >/dev/null 2>&1'''
   ) == 0
