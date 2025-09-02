@@ -49,6 +49,63 @@ private Map makeTfvars(wave, pl) {
 }
 
 // ------------------------------
+// Import-if-exists helper (idempotency for ALB/TG/LT)
+// ------------------------------
+
+/**
+ * Import existing infra (by well-known names) into the current TF state
+ * so that re-runs are idempotent.
+ * Looks up resources in the given region and imports them if found.
+ */
+private void importExistingInfra(String stack, String region, String backendCfgPath) {
+  dir(stack) {
+    // Ensure backend is configured so imports target the right state
+    sh """
+      terraform init -input=false -reconfigure -backend-config=${backendCfgPath}
+    """
+
+    // --- ALB (name: maas-alb)
+    def albJson = sh(returnStdout: true, script: """
+      aws elbv2 describe-load-balancers --region ${region} --names maas-alb --output json 2>/dev/null || true
+    """).trim()
+    if (albJson) {
+      def parsed = new JsonSlurper().parseText(albJson)
+      def albArn = parsed?.LoadBalancers?.getAt(0)?.LoadBalancerArn
+      if (albArn) {
+        echo "Importing existing ALB into state: ${albArn}"
+        sh "terraform import -input=false aws_lb.app ${albArn} || true"
+      }
+    }
+
+    // --- Target Group (name: maas-tg-prod)
+    def tgJson = sh(returnStdout: true, script: """
+      aws elbv2 describe-target-groups --region ${region} --names maas-tg-prod --output json 2>/dev/null || true
+    """).trim()
+    if (tgJson) {
+      def parsed = new JsonSlurper().parseText(tgJson)
+      def tgArn = parsed?.TargetGroups?.getAt(0)?.TargetGroupArn
+      if (tgArn) {
+        echo "Importing existing Target Group into state: ${tgArn}"
+        sh "terraform import -input=false aws_lb_target_group.prod ${tgArn} || true"
+      }
+    }
+
+    // --- Launch Template (name prefix: maas-lt-)
+    def ltJson = sh(returnStdout: true, script: """
+      aws ec2 describe-launch-templates --region ${region} --filters Name=launch-template-name,Values=maas-lt-* --output json 2>/dev/null || true
+    """).trim()
+    if (ltJson) {
+      def parsed = new JsonSlurper().parseText(ltJson)
+      def ltId = parsed?.LaunchTemplates?.getAt(0)?.LaunchTemplateId
+      if (ltId) {
+        echo "Importing existing Launch Template into state: ${ltId}"
+        sh "terraform import -input=false aws_launch_template.lt ${ltId} || true"
+      }
+    }
+  }
+}
+
+// ------------------------------
 // Terraform entrypoints
 // ------------------------------
 
@@ -61,7 +118,20 @@ def plan(Map m = [:]) {
 def execute(Map m = [:]) {
   def stack  = resolveStackDir(m.dir)
   def tfvars = makeTfvars(m.wave, m.placement)
+
+  // Write tfvars for this run
   writeFile file: "${stack}/wave.auto.tfvars.json", text: JsonOutput.toJson(tfvars)
+
+  // Import existing resources (ALB/TG/LT) so apply is idempotent
+  def backendCfg = "${pwd()}/.tfbackend/backend.hcl"
+  importExistingInfra(stack, (tfvars.region ?: ''), backendCfg)
+
+  // Create a plan file so terraform.apply can use it if it expects plan.tfplan
+  dir(stack) {
+    sh "terraform plan -input=false -out=plan.tfplan || true"
+  }
+
+  // Apply (wrapper will use plan.tfplan when present)
   terraform.apply(stack)
 }
 
