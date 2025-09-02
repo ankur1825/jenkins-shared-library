@@ -49,22 +49,16 @@ private Map makeTfvars(wave, pl) {
 // Import-if-exists helper (ALB/TG/LT)
 // ------------------------------
 
-/**
- * Import existing infra (by well-known names) into the current TF state
- * so that re-runs are idempotent.
- * Uses AWS CLI --query/--output text to avoid non-serializable JSON maps.
- */
+/** Import existing infra (by well-known names) into TF state so re-runs are idempotent. */
 private void importExistingInfra(String stack, String region, String backendCfgPath) {
   dir(stack) {
-    // Make sure we’re pointed at the right backend before importing
     sh "terraform init -input=false -reconfigure -backend-config=${backendCfgPath}"
 
-    // Helper to check if a resource is already in state
     def inState = { String addr ->
-      return sh(returnStatus: true, script: "terraform state show ${addr} >/dev/null 2>&1") == 0
+      sh(returnStatus: true, script: "terraform state show ${addr} >/dev/null 2>&1") == 0
     }
 
-    // --- ALB (name: maas-alb)
+    // ALB
     def albArn = sh(returnStdout: true, script: """
       aws elbv2 describe-load-balancers \
         --region ${region} --names maas-alb \
@@ -75,7 +69,7 @@ private void importExistingInfra(String stack, String region, String backendCfgP
       sh "terraform import -input=false aws_lb.app ${albArn} || true"
     }
 
-    // --- Target Group (name: maas-tg-prod)
+    // TG
     def tgArn = sh(returnStdout: true, script: """
       aws elbv2 describe-target-groups \
         --region ${region} --names maas-tg-prod \
@@ -86,7 +80,7 @@ private void importExistingInfra(String stack, String region, String backendCfgP
       sh "terraform import -input=false aws_lb_target_group.prod ${tgArn} || true"
     }
 
-    // --- Launch Template (first matching name: maas-lt-*)
+    // Launch Template
     def ltId = sh(returnStdout: true, script: """
       aws ec2 describe-launch-templates \
         --region ${region} --filters Name=launch-template-name,Values=maas-lt-* \
@@ -110,23 +104,22 @@ def plan(Map m = [:]) {
 }
 
 def execute(Map m = [:]) {
-  def stack  = resolveStackDir(m.dir)
-  def tfvars = makeTfvars(m.wave, m.placement)
+  def stack   = resolveStackDir(m.dir)
+  def tfvars  = makeTfvars(m.wave, m.placement)
+  def account = m.account  // optional {role_arn, external_id}
 
-  // --- NEW: If this placement defines a source EC2, install the MGN agent first.
+  // Install MGN agent first if this placement defines an EC2 source
   if (m?.placement?.params?.source?.type == 'aws-ec2') {
     echo "Installing MGN agent for placement ${m.placement.id}..."
-    installAgentFromWave(wave: m.wave, placement: m.placement)
+    installAgentFromWave(wave: m.wave, placement: m.placement, account: account)
   }
 
-  // Ensure TF has the same tfvars file that 'plan' would write
+  // Ensure TF has the same tfvars that 'plan' would write
   writeFile file: "${stack}/wave.auto.tfvars.json", text: JsonOutput.toJson(tfvars)
 
-  // Import existing resources (ALB/TG/LT) so first apply is idempotent
+  // Import existing resources and then apply
   def backendCfg = "${pwd()}/.tfbackend/backend.hcl"
   importExistingInfra(stack, (tfvars.region ?: ''), backendCfg)
-
-  // Create a plan then apply
   terraform.plan(stack, JsonOutput.toJson(tfvars))
   terraform.apply(stack)
 }
@@ -154,7 +147,7 @@ private List<String> linuxInstallCommands(String destRegion) {
   ]
 }
 
-/** Quiet installer for Windows targeting the DEST region (safe from Groovy `$` interpolation) */
+/** Quiet installer for Windows targeting the DEST region */
 private String windowsInstallCommands(String destRegion) {
   return (
     '''$ErrorActionPreference='Stop'
@@ -187,40 +180,38 @@ private List<String> resolveInstanceIds(String srcRegion, List<String> idsOrName
   return ids.unique()
 }
 
-/** Create MGN service-linked role if missing and check SSM connectivity. */
+/** Create MGN service-linked role (if missing) & check SSM connectivity.
+ *  Runs under CURRENT credentials (no assume-role here). */
 def ensureMgnPrereqs(Map args) {
-  def accountRef  = args.accountRef
   def region      = args.region
   def instanceIds = (args.instanceIds ?: []) as List<String>
 
-  withAwsTenant(accountRef: accountRef, region: region) {
-    // Service-linked role
-    def roleOk = sh(returnStatus: true, script:
-      '''aws iam get-role --role-name AWSServiceRoleForApplicationMigrationService >/dev/null 2>&1'''
-    ) == 0
-    if (!roleOk) {
-      echo "Creating MGN service-linked role..."
-      sh('''aws iam create-service-linked-role --aws-service-name mgn.amazonaws.com''')
-    } else {
-      echo "MGN service-linked role exists."
-    }
+  // Service-linked role
+  def roleOk = sh(returnStatus: true, script:
+    '''aws iam get-role --role-name AWSServiceRoleForApplicationMigrationService >/dev/null 2>&1'''
+  ) == 0
+  if (!roleOk) {
+    echo "Creating MGN service-linked role..."
+    sh('''aws iam create-service-linked-role --aws-service-name mgn.amazonaws.com''')
+  } else {
+    echo "MGN service-linked role exists."
+  }
 
-    // Basic SSM reachability (are these instances managed?)
-    if (instanceIds) {
-      writeFile file: 'ids.json', text: JsonOutput.toJson(instanceIds)
-      def info = sh(returnStdout: true, script:
-        '''aws ssm describe-instance-information --region ''' + region + ''' \
-          --instance-information-filter-list '[{"key":"InstanceIds","valueSet":'$(cat ids.json)'}]' \
-          --query 'InstanceInformationList[].InstanceId' --output json
-        '''
-      ).trim()
-      def managed = (new groovy.json.JsonSlurperClassic().parseText(info) ?: []) as List
-      def unmanaged = (instanceIds as Set) - (managed as Set)
-      if (unmanaged) {
-        echo "WARNING: These instances are not managed by SSM (no agent/role or no connectivity): ${unmanaged}"
-      } else {
-        echo "All instances appear in SSM inventory."
-      }
+  // Basic SSM reachability (are these instances managed?)
+  if (instanceIds) {
+    writeFile file: 'ids.json', text: JsonOutput.toJson(instanceIds)
+    def info = sh(returnStdout: true, script:
+      '''aws ssm describe-instance-information --region ''' + region + ''' \
+        --instance-information-filter-list '[{"key":"InstanceIds","valueSet":'$(cat ids.json)'}]' \
+        --query 'InstanceInformationList[].InstanceId' --output json
+      '''
+    ).trim()
+    def managed = (new groovy.json.JsonSlurperClassic().parseText(info) ?: []) as List
+    def unmanaged = (instanceIds as Set) - (managed as Set)
+    if (unmanaged) {
+      echo "WARNING: These instances are not managed by SSM (no agent/role or no connectivity): ${unmanaged}"
+    } else {
+      echo "All instances appear in SSM inventory."
     }
   }
 }
@@ -256,28 +247,42 @@ private String sendSsm(String region, List<String> instanceIds, String docName, 
   return cmdId
 }
 
-/**
- * Install the MGN agent on a set of *source* EC2 instances via SSM.
- */
+/** Install the MGN agent on a set of *source* EC2 instances via SSM.
+ *  Provide EITHER (srcRoleArn[/srcExternalId]) OR (srcAccountRef). */
 def installAgentOnEc2(Map args) {
+  def srcRoleArn    = args.srcRoleArn
+  def srcExternalId = args.srcExternalId
   def srcAccountRef = args.srcAccountRef
   def srcRegion     = args.srcRegion
   def destRegion    = args.destRegion
   def idsOrNames    = (args.idsOrNames ?: []) as List
 
-  if (!srcAccountRef || !srcRegion || !destRegion || !idsOrNames) {
-    error "installAgentOnEc2 requires srcAccountRef, srcRegion, destRegion, idsOrNames"
+  if (!srcRegion || !destRegion || !idsOrNames) {
+    error "installAgentOnEc2 requires srcRegion, destRegion, idsOrNames"
+  }
+  if (!srcRoleArn && !srcAccountRef) {
+    error "installAgentOnEc2 requires either srcRoleArn[/srcExternalId] or srcAccountRef"
   }
 
-  withAwsTenant(accountRef: srcAccountRef, region: srcRegion) {
+  def runWithCreds = { Closure body ->
+    if (srcRoleArn) {
+      withAwsTenant(roleArn: srcRoleArn, externalId: srcExternalId, region: srcRegion) { body() }
+    } else {
+      withAwsTenant(accountRef: srcAccountRef, region: srcRegion) { body() }
+    }
+  }
+
+  runWithCreds {
     def instanceIds = resolveInstanceIds(srcRegion, idsOrNames)
     if (!instanceIds) {
       error "No matching instances found for: ${idsOrNames}"
     }
     echo "Will install MGN agent on: ${instanceIds}"
 
-    ensureMgnPrereqs(accountRef: srcAccountRef, region: srcRegion, instanceIds: instanceIds)
+    // Ensure SLR + SSM visibility (under current creds)
+    ensureMgnPrereqs(region: srcRegion, instanceIds: instanceIds)
 
+    // Classify OS via SSM inventory (unknowns -> Linux)
     writeFile file: 'ids.json', text: JsonOutput.toJson(instanceIds)
     def invJson = sh(returnStdout: true, script:
       '''aws ssm describe-instance-information --region ''' + srcRegion + ''' \
@@ -292,6 +297,7 @@ def installAgentOnEc2(Map args) {
     def unknown = instanceIds.findAll { !(it in known) }
     linuxIds.addAll(unknown)
 
+    // Chunk to avoid SSM limits
     def chunk = { List l, int n -> l.collate(n) }
     if (linuxIds) {
       def cmds = linuxInstallCommands(destRegion)
@@ -304,10 +310,12 @@ def installAgentOnEc2(Map args) {
   }
 }
 
-/** Convenience wrapper: reads wave/placement and installs the agent if defined. */
+/** Convenience wrapper: reads wave/placement and installs the agent if defined.
+ *  Optionally pass account: [role_arn:'...', external_id:'...'] to avoid accountRef. */
 def installAgentFromWave(Map m = [:]) {
   def wave = m.wave
   def pl   = m.placement
+  def acc  = m.account  // optional {role_arn, external_id}
   if (!wave || !pl) error "installAgentFromWave needs wave and placement"
 
   def destRegion = pl.params.region
@@ -316,12 +324,19 @@ def installAgentFromWave(Map m = [:]) {
     echo "No EC2 source defined for placement ${pl.id}; skipping agent install."
     return
   }
-  installAgentOnEc2([
-    srcAccountRef: (src.account_ref ?: pl.params.account_ref),
-    srcRegion    : src.region,
-    destRegion   : destRegion,
-    idsOrNames   : (src.server_ids ?: [])
-  ])
+
+  def args = [
+    srcRegion  : src.region,
+    destRegion : destRegion,
+    idsOrNames : (src.server_ids ?: [])
+  ]
+  if (acc?.role_arn) {
+    args.srcRoleArn    = acc.role_arn
+    args.srcExternalId = acc.external_id
+  } else {
+    args.srcAccountRef = (src.account_ref ?: pl.params.account_ref)
+  }
+  installAgentOnEc2(args)
 }
 
 return this
