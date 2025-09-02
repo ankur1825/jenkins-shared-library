@@ -4,25 +4,34 @@ pipeline {
   options { timestamps(); ansiColor('xterm') }
 
   parameters {
-    string(name: 'IAC_REF',       defaultValue: 'main', description: 'IaC ref (tag/branch)')
-    string(name: 'WAVE_ID',       defaultValue: '',     description: 'Wave ID')
-    text  (name: 'WAVE_JSON',     defaultValue: '',     description: 'Wave document (JSON)')
-    text  (name: 'TENANT_CONTEXT',defaultValue: '',     description: 'Tenant + placements (JSON)')
-    string(name: 'REQUESTED_BY',  defaultValue: '',     description: 'User requesting teardown')
+    string(name: 'IAC_REF',        defaultValue: 'main', description: 'IaC ref (tag/branch)')
+    string(name: 'WAVE_ID',        defaultValue: '',     description: 'Wave ID')
+    text  (name: 'WAVE_JSON',      defaultValue: '{}',   description: 'Wave JSON (plain or base64)')
+    text  (name: 'TENANT_CONTEXT', defaultValue: '{}',   description: 'Tenant context JSON (plain or base64)')
+    string(name: 'REQUESTED_BY',   defaultValue: '',     description: 'User requesting teardown')
   }
 
   environment {
-    IAC_REPO   = 'https://github.com/ankur1825/Self-Service-CICD-Pipeline-backend-multicloud.git' // replace with new repo when ready
-    IAC_REF    = "${params.IAC_REF}"
-    GITHUB_CRED = 'github-token'
+    IAC_REPO    = 'https://github.com/ankur1825/Self-Service-CICD-Pipeline-backend-multicloud.git'
+    IAC_REF     = "${params.IAC_REF}"
+    GITHUB_CRED = 'github-user'
   }
 
   stages {
     stage('Parse Inputs') {
       steps {
         script {
-          wave      = readJSON text: (params.WAVE_JSON ?: '{}')
-          tenantCtx = readJSON text: (params.TENANT_CONTEXT ?: '{}')
+          def parseJsonParam = { String v ->
+            def s = (v ?: '').trim()
+            if (!s) return [:]
+            if ((s ==~ /^[A-Za-z0-9+\/=\s]+$/) && s.endsWith('=')) { try { s = new String(s.decodeBase64(),'UTF-8') } catch(e){} }
+            try { readJSON text: s } catch (e) { echo "JSON parse failed: ${e}"; [:] }
+          }
+          def wave      = parseJsonParam(params.WAVE_JSON)
+          def tenantCtx = parseJsonParam(params.TENANT_CONTEXT)
+          currentBuild.description = "DESTROY wave=${params.WAVE_ID} placements=${wave?.placements?.size() ?: 0}"
+          env.__WAVE_JSON      = groovy.json.JsonOutput.toJson(wave)
+          env.__TENANT_CONTEXT = groovy.json.JsonOutput.toJson(tenantCtx)
           echo "Teardown requested by: ${params.REQUESTED_BY}"
         }
       }
@@ -30,13 +39,20 @@ pipeline {
 
     stage('Checkout IaC') {
       steps {
-        script { terraform.checkoutModules(env.IAC_REPO, env.IAC_REF, env.GITHUB_CRED) }
+        script {
+          terraform.checkoutModules(env.IAC_REPO, env.IAC_REF, env.GITHUB_CRED, '.')  // into workspace root
+          env.IAC_DIR = '.'  // so mgn.groovy resolves its default stack path correctly
+        }
       }
     }
 
     stage('Destroy per Placement') {
+      when { expression { readJSON(text: env.__WAVE_JSON).placements?.size() > 0 } }
       steps {
         script {
+          def wave      = readJSON(text: env.__WAVE_JSON)
+          def tenantCtx = readJSON(text: env.__TENANT_CONTEXT)
+
           for (pl in wave.placements) {
             if (pl.provider != 'aws') { echo "Skip ${pl.provider} (not supported yet)"; continue }
 
@@ -51,53 +67,10 @@ pipeline {
                                     prefix: "waves/${params.WAVE_ID}/${pl.id}",
                                     region: region) {
 
-                // 1) Destroy backup plan first (if it was created during plan/execute)
-                if (pl.params.attach_backup) {
-                  // If your shared lib exposes this:
-                  try {
-                    backupPlan.destroy(tags: pl.params.tags,
-                                       kmsAlias: pl.params.kms_key_alias,
-                                       copyToRegion: pl.params.copy_to_region)
-                  } catch (Throwable t) {
-                    echo "backupPlan.destroy not found in library, falling back to raw terraform"
-                    def bvars = [
-                      region                        : pl.params.region,
-                      tags                          : (pl.params.tags ?: [:]) + [Backup: 'true'],
-                      plan_name                     : "maas-backup-plan-${params.WAVE_ID}-${pl.id}",
-                      vault_name                    : "maas-backup-vault",
-                      selection_tag_map             : [Backup: 'true'],
-                      schedule_cron                 : "cron(0 5 ? * * *)",
-                      transition_to_cold_after_days : 0,
-                      delete_after_days             : 35,
-                      enable_cross_region_copy      : (pl.params.copy_to_region ? true : false),
-                      destination_region            : (pl.params.copy_to_region ?: null),
-                      destination_vault_name        : "maas-backup-vault-dr"
-                    ]
-                    terraform.destroy('aws/backup-plan', groovy.json.JsonOutput.toJson(bvars))
-                  }
-                }
+                // If your shared-lib backup wrapper exists, you can optionally tear it down here first.
 
-                // 2) Destroy the EC2 lift-and-shift stack
-                try {
-                  // Prefer the shared lib wrapper if available
-                  mgn.destroy(dir: 'aws/ec2-liftshift', wave: wave, placement: pl)
-                } catch (Throwable t) {
-                  echo "mgn.destroy not found in library, falling back to raw terraform"
-                  def tfvars = [
-                    region               : pl.params.region,
-                    vpc_id               : pl.params.vpc_id,
-                    private_subnet_ids   : pl.params.private_subnet_ids,
-                    security_group_ids   : pl.params.security_group_ids,
-                    instance_type_map    : pl.params.instance_type_map,
-                    tg_health_check_path : (pl.params.tg_health_check_path ?: '/healthz'),
-                    blue_green           : (pl.params.blue_green ?: true),
-                    tags                 : (pl.params.tags ?: [:]),
-                    attach_backup        : (pl.params.attach_backup ?: true),
-                    kms_key_alias        : (pl.params.kms_key_alias ?: 'alias/tenant-data'),
-                    copy_to_region       : (pl.params.copy_to_region ?: null)
-                  ]
-                  terraform.destroy('aws/ec2-liftshift', groovy.json.JsonOutput.toJson(tfvars))
-                }
+                // Destroy the EC2 liftshift stack (let mgn.groovy pick the correct default path)
+                mgn.destroy(wave: wave, placement: pl)
               }
             }
           }
