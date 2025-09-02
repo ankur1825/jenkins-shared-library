@@ -180,13 +180,21 @@ private List<String> resolveInstanceIds(String srcRegion, List<String> idsOrName
   return ids.unique()
 }
 
+/** Helper: are source and destination accounts the same? */
+private boolean sameAccountRef(Map pl) {
+  def src  = pl?.params?.source
+  if (!src || src.type != 'aws-ec2') return false
+  def dest = pl.params.account_ref
+  def sref = (src.account_ref ?: dest)
+  return (sref?.toString() == dest?.toString())
+}
+
 /** Create MGN service-linked role (if missing) & check SSM connectivity.
  *  Runs under CURRENT credentials (no assume-role here). */
 def ensureMgnPrereqs(Map args) {
   def region      = args.region
   def instanceIds = (args.instanceIds ?: []) as List<String>
 
-  // Service-linked role
   def roleOk = sh(returnStatus: true, script:
     '''aws iam get-role --role-name AWSServiceRoleForApplicationMigrationService >/dev/null 2>&1'''
   ) == 0
@@ -197,7 +205,6 @@ def ensureMgnPrereqs(Map args) {
     echo "MGN service-linked role exists."
   }
 
-  // Basic SSM reachability (are these instances managed?)
   if (instanceIds) {
     writeFile file: 'ids.json', text: JsonOutput.toJson(instanceIds)
     def info = sh(returnStdout: true, script:
@@ -248,7 +255,8 @@ private String sendSsm(String region, List<String> instanceIds, String docName, 
 }
 
 /** Install the MGN agent on a set of *source* EC2 instances via SSM.
- *  Provide EITHER (srcRoleArn[/srcExternalId]) OR (srcAccountRef). */
+ *  Provide EITHER (srcRoleArn[/srcExternalId]) OR (srcAccountRef),
+ *  OR set skipAssume=true to reuse current creds. */
 def installAgentOnEc2(Map args) {
   def srcRoleArn    = args.srcRoleArn
   def srcExternalId = args.srcExternalId
@@ -256,30 +264,23 @@ def installAgentOnEc2(Map args) {
   def srcRegion     = args.srcRegion
   def destRegion    = args.destRegion
   def idsOrNames    = (args.idsOrNames ?: []) as List
+  def skipAssume    = (args.skipAssume ?: false) as boolean
 
   if (!srcRegion || !destRegion || !idsOrNames) {
     error "installAgentOnEc2 requires srcRegion, destRegion, idsOrNames"
   }
-  if (!srcRoleArn && !srcAccountRef) {
-    error "installAgentOnEc2 requires either srcRoleArn[/srcExternalId] or srcAccountRef"
+  if (!skipAssume && !srcRoleArn && !srcAccountRef) {
+    error "installAgentOnEc2 requires either srcRoleArn[/srcExternalId] or srcAccountRef (or skipAssume=true)"
   }
 
-  def runWithCreds = { Closure body ->
-    if (srcRoleArn) {
-      withAwsTenant(roleArn: srcRoleArn, externalId: srcExternalId, region: srcRegion) { body() }
-    } else {
-      withAwsTenant(accountRef: srcAccountRef, region: srcRegion) { body() }
-    }
-  }
-
-  runWithCreds {
+  def run = {
     def instanceIds = resolveInstanceIds(srcRegion, idsOrNames)
     if (!instanceIds) {
       error "No matching instances found for: ${idsOrNames}"
     }
     echo "Will install MGN agent on: ${instanceIds}"
 
-    // Ensure SLR + SSM visibility (under current creds)
+    // Ensure SLR + SSM visibility (under CURRENT creds)
     ensureMgnPrereqs(region: srcRegion, instanceIds: instanceIds)
 
     // Classify OS via SSM inventory (unknowns -> Linux)
@@ -308,6 +309,15 @@ def installAgentOnEc2(Map args) {
       chunk(windowsIds, 25).each { ids -> sendSsm(srcRegion, ids, 'AWS-RunPowerShellScript', [commands: [ps]], true) }
     }
   }
+
+  if (skipAssume) {
+    // Same account: reuse current creds (no inner AssumeRole).
+    run()
+  } else if (srcRoleArn) {
+    withAwsTenant(roleArn: srcRoleArn, externalId: srcExternalId, region: srcRegion) { run() }
+  } else {
+    withAwsTenant(accountRef: srcAccountRef, region: srcRegion) { run() }
+  }
 }
 
 /** Convenience wrapper: reads wave/placement and installs the agent if defined.
@@ -325,16 +335,22 @@ def installAgentFromWave(Map m = [:]) {
     return
   }
 
+  // Skip inner AssumeRole if source and destination accounts are the same.
+  def skip = sameAccountRef(pl)
+
   def args = [
-    srcRegion  : src.region,
-    destRegion : destRegion,
-    idsOrNames : (src.server_ids ?: [])
+    srcRegion   : src.region,
+    destRegion  : destRegion,
+    idsOrNames  : (src.server_ids ?: []),
+    skipAssume  : skip
   ]
-  if (acc?.role_arn) {
-    args.srcRoleArn    = acc.role_arn
-    args.srcExternalId = acc.external_id
-  } else {
-    args.srcAccountRef = (src.account_ref ?: pl.params.account_ref)
+  if (!skip) {
+    if (acc?.role_arn) {
+      args.srcRoleArn    = acc.role_arn
+      args.srcExternalId = acc.external_id
+    } else {
+      args.srcAccountRef = (src.account_ref ?: pl.params.account_ref)
+    }
   }
   installAgentOnEc2(args)
 }
