@@ -23,7 +23,7 @@ pipeline {
           def parseJsonParam = { String v ->
             def s = (v ?: '').trim()
             if (!s) return [:]
-            if ((s ==~ /^[A-Za-z0-9+\/=\s]+$/) && s.endsWith('=')) {  // allow base64
+            if ((s ==~ /^[A-Za-z0-9+\/=\s]+$/) && s.endsWith('=')) {  // allow base64-ish
               try { s = new String(s.decodeBase64(), 'UTF-8') } catch (ignored) {}
             }
             try { readJSON text: s } catch (e) { echo "JSON parse failed (len=${s.size()}): ${e}"; [:] }
@@ -44,7 +44,6 @@ pipeline {
     stage('Checkout IaC') {
       steps {
         script {
-          // same as maas-plan, so folder structure matches
           terraform.checkoutModules(env.IAC_REPO, env.IAC_REF, env.GITHUB_CRED, '.')
           env.IAC_DIR = '.'
         }
@@ -60,6 +59,7 @@ pipeline {
 
           for (pl in wave.placements) {
             if (pl.provider != 'aws') { echo "Skip ${pl.provider}"; continue }
+
             def acc = tenantCtx.placements.find { it.id == pl.id }?.account
             if (!acc) { error "No account context for placement ${pl.id}" }
 
@@ -68,8 +68,13 @@ pipeline {
               terraform.withBackend(bucket: acc.state_bucket, table: acc.lock_table,
                                     prefix: "waves/${params.WAVE_ID}/${pl.id}",
                                     region: region) {
-                // mgn.execute now uses the full path internally
-                mgn.execute(wave: wave, placement: pl)
+
+                // ⬇️ Pass account so mgn.execute can assume the right role for SSM/MGN agent install
+                mgn.execute(
+                  wave: wave,
+                  placement: pl,
+                  account: [role_arn: acc.role_arn, external_id: acc.external_id]
+                )
               }
             }
           }
