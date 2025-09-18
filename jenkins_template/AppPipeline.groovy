@@ -25,28 +25,17 @@ def run(Map params) {
 
             stage('Read config.json') {
                 script {
-                    if (fileExists('config.json')) {
-                        def privateRepo = sh(script: '''
-                            grep -oP '"PRIVATE_REPO":\\s*"[^"]*"' config.json | awk -F '"' '{print $4}'
-                        ''', returnStdout: true).trim()
-
-                        def tag = sh(script: '''
-                            grep -oP '"tag":\\s*"[^"]*"' config.json | awk -F '"' '{print $4}'
-                        ''', returnStdout: true).trim()
-
-                        def appName = sh(script: '''
-                            grep -oP '"AppName":\\s*"[^"]*"' config.json | awk -F '"' '{print $4}'
-                        ''', returnStdout: true).trim()
-
-                        if (privateRepo && tag && appName) {
-                            env.PRIVATE_REPO = privateRepo
-                            env.TAG = tag
-                            env.APP_NAME = appName
-                        } else {
-                            error "Missing necessary fields in config.json."
-                        }
-                    } else {
+                    if (!fileExists('config.json')) {
                         error "config.json file not found."
+                    }
+                    // Use Pipeline Utility Steps instead of external tools
+                    def cfg = readJSON file: 'config.json'
+                    env.PRIVATE_REPO = (cfg.PRIVATE_REPO ?: '').toString().trim()
+                    env.TAG          = (cfg.tag ?: '').toString().trim()
+                    env.APP_NAME     = (cfg.AppName ?: '').toString().trim()
+
+                    if (!env.PRIVATE_REPO || !env.TAG || !env.APP_NAME) {
+                        error "Missing necessary fields in config.json. Need PRIVATE_REPO, tag, AppName."
                     }
                 }
             }
@@ -59,10 +48,11 @@ def run(Map params) {
                         error "sonar-project.properties not found!"
                     }
 
-                    def sonarProjectKey = sh(
-                        script: "grep '^sonar.projectKey=' sonar-project.properties | awk -F '=' '{print \$2}' | tr -d '\\r\\n' | xargs",
-                        returnStdout: true
-                    ).trim()
+                    // Read sonar-project.properties without shelling out
+                    def propsText = readFile 'sonar-project.properties'
+                    def sonarProjectKey = propsText.readLines()
+                        .find { it.trim().startsWith('sonar.projectKey=') }
+                        ?.split('=', 2)?.getAt(1)?.trim()
                     if (!sonarProjectKey) {
                         error "sonar.projectKey is missing or empty!"
                     }
@@ -127,7 +117,7 @@ def run(Map params) {
                 def imageName = "${env.PRIVATE_REPO}/${env.APP_NAME}:${env.TAG}".toLowerCase()
                 withCredentials([usernamePassword(credentialsId: 'dockerhub-creds', usernameVariable: 'DOCKER_USER', passwordVariable: 'DOCKER_PASS')]) {
                     sh """
-                        echo \"$DOCKER_PASS\" | docker login -u \"$DOCKER_USER\" --password-stdin
+                        echo "$DOCKER_PASS" | docker login -u "$DOCKER_USER" --password-stdin
                         docker push ${imageName}
                     """
                 }
@@ -147,7 +137,7 @@ def run(Map params) {
 // ================== NEW: DEVOPS PIPELINE ==================
 def runDevops(Map params) {
     /*
-      Expected params (from backend /devops/pipeline):
+      Expected params:
         PROJECT_NAME, PROJECT_TYPE, REPO_TYPE, REPO_URL, BRANCH, CREDENTIALS_ID
         ENABLE_SONARQUBE, ENABLE_SOAPUI, ENABLE_JMETER, ENABLE_SELENIUM, ENABLE_NEWMAN
         TARGET_ENV (EKS-PROD|EKS-NONPROD), NOTIFY_EMAIL, REQUESTED_BY
@@ -155,6 +145,9 @@ def runDevops(Map params) {
     node {
         try {
             stage('Checkout Application Repo') {
+                if (!params.REPO_URL || !params.REPO_URL.toString().contains('/')) {
+                    error "REPO_URL is invalid ('${params.REPO_URL}'). Provide a full Git URL, e.g. https://github.com/org/repo.git"
+                }
                 echo "Cloning repository: ${params.REPO_URL} (branch ${params.BRANCH})"
                 git credentialsId: params.CREDENTIALS_ID, url: params.REPO_URL, branch: params.BRANCH
                 sh 'pwd && ls -lrth'
@@ -165,9 +158,10 @@ def runDevops(Map params) {
                     if (!fileExists('config.json')) {
                         error "config.json file not found."
                     }
-                    env.PRIVATE_REPO = sh(script: "jq -r '.PRIVATE_REPO' config.json", returnStdout: true).trim()
-                    env.TAG          = sh(script: "jq -r '.tag'           config.json", returnStdout: true).trim()
-                    env.APP_NAME     = sh(script: "jq -r '.AppName'       config.json", returnStdout: true).trim()
+                    def cfg = readJSON file: 'config.json'
+                    env.PRIVATE_REPO = (cfg.PRIVATE_REPO ?: '').toString().trim()
+                    env.TAG          = (cfg.tag ?: '').toString().trim()
+                    env.APP_NAME     = (cfg.AppName ?: '').toString().trim()
                     if (!env.PRIVATE_REPO || !env.TAG || !env.APP_NAME) {
                         error "PRIVATE_REPO/tag/AppName missing in config.json"
                     }
@@ -178,12 +172,12 @@ def runDevops(Map params) {
                 }
             }
 
-            // -------- PARAMETERS → COMPILE & PACKAGE (generic) --------
+            // -------- Compile & Package (generic) --------
             stage("Compile & Package (${params.PROJECT_TYPE})") {
                 compileAndPackage(params.PROJECT_TYPE)
             }
 
-            // -------- QUALITY GATES (generic) --------
+            // -------- QUALITY GATES --------
             if (params.ENABLE_SONARQUBE?.toBoolean()) {
                 stage('SonarQube') {
                     def scannerHome = tool 'SONAR-SCANNER'
@@ -208,29 +202,26 @@ def runDevops(Map params) {
                     if (!fileExists('tests/soapui/project.xml')) {
                         error "SoapUI project not found at tests/soapui/project.xml"
                     }
-                    sh """
-                      testrunner.sh -j -f reports/soapui tests/soapui/project.xml
-                    """
+                    sh 'testrunner.sh -j -f reports/soapui tests/soapui/project.xml'
                 }
             }
 
             if (params.ENABLE_JMETER?.toBoolean()) {
                 stage('JMeter Tests') {
                     if (!fileExists('tests/jmeter/test.jmx')) { error "JMeter test not found at tests/jmeter/test.jmx" }
-                    sh """
+                    sh '''
                       mkdir -p reports/jmeter
                       jmeter -n -t tests/jmeter/test.jmx -l reports/jmeter/results.jtl -e -o reports/jmeter/html
-                    """
+                    '''
                 }
             }
 
             if (params.ENABLE_SELENIUM?.toBoolean()) {
                 stage('Selenium UI Tests') {
-                    // Try a few obvious commands; fail if none exist
                     def ran = false
                     if (fileExists('pom.xml')) { sh 'mvn -B -Dtest=*UITest* test'; ran = true }
                     else if (fileExists('package.json')) {
-                        def hasScript = sh(returnStatus:true, script: "jq -e '.scripts[\"test:e2e\"]' package.json >/dev/null") == 0
+                        def hasScript = sh(returnStatus:true, script: "node -e \"try{let p=require('./package.json');process.exit(p.scripts&&p.scripts['test:e2e']?0:1)}catch(e){process.exit(1)}\"") == 0
                         if (hasScript) { sh 'npm ci && npm run test:e2e'; ran = true }
                     }
                     if (!ran) { error "No Selenium UI test command found." }
@@ -242,19 +233,16 @@ def runDevops(Map params) {
                     if (!fileExists('tests/postman/collection.json')) {
                         error "Postman collection not found at tests/postman/collection.json"
                     }
-                    sh """
-                      newman run tests/postman/collection.json --reporters cli,junit --reporter-junit-export reports/newman/results.xml
-                    """
+                    sh 'newman run tests/postman/collection.json --reporters cli,junit --reporter-junit-export reports/newman/results.xml'
                 }
             }
 
-            // -------- If we got here, gates passed → build docker image --------
+            // -------- Build & Scan --------
             stage('Build Docker Image') {
                 def imageName = "${env.PRIVATE_REPO}/${env.APP_NAME}:${env.TAG}".toLowerCase()
                 sh "docker build -t ${imageName} ."
             }
 
-            // (Optional) Scan built image again
             if (params.ENABLE_TRIVY?.toBoolean()) {
                 stage('Trivy Scan Built Image') {
                     def imageName = "${env.PRIVATE_REPO}/${env.APP_NAME}:${env.TAG}".toLowerCase()
@@ -262,7 +250,7 @@ def runDevops(Map params) {
                 }
             }
 
-            // -------- Push docker + (optional) push artifact to Artifactory --------
+            // -------- Publish --------
             stage('Publish Artifacts') {
                 def imageName = "${env.PRIVATE_REPO}/${env.APP_NAME}:${env.TAG}".toLowerCase()
                 withCredentials([usernamePassword(credentialsId: 'dockerhub-creds', usernameVariable: 'DOCKER_USER', passwordVariable: 'DOCKER_PASS')]) {
@@ -272,21 +260,18 @@ def runDevops(Map params) {
                     """
                 }
 
-                // Artifactory upload if configured & artifact present
                 if (env.ARTIFACT_PATH) {
                     echo "Uploading artifact: ${env.ARTIFACT_PATH}"
                     withCredentials([usernamePassword(credentialsId: 'artifactory-creds', usernameVariable: 'ART_USER', passwordVariable: 'ART_PASS')]) {
                         def targetUrl = "${env.ARTIFACTORY_URL ?: 'https://artifactory.example.com/generic'}/${env.APP_NAME}/${env.TAG}/${env.ARTIFACT_NAME ?: 'artifact.bin'}"
-                        sh """
-                          curl -sfSL -u "$ART_USER:$ART_PASS" -T "${env.ARTIFACT_PATH}" "${targetUrl}"
-                        """
+                        sh """curl -sfSL -u "$ART_USER:$ART_PASS" -T "${env.ARTIFACT_PATH}" "${targetUrl}" """
                     }
                 } else {
                     echo "No non-container artifact to upload (skip)."
                 }
             }
 
-            // -------- Deploy to selected EKS environment --------
+            // -------- Deploy --------
             stage("Deploy (${params.TARGET_ENV})") {
                 deployHelm(ENABLE_OPA: params.ENABLE_OPA, TARGET_ENV: params.TARGET_ENV ?: 'EKS-NONPROD')
             }
