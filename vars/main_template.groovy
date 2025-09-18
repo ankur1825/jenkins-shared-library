@@ -33,40 +33,21 @@ def call(Map params = [:]) {
             }
         }
 
-        // Optional: you don't need to clone the shared library again here,
-        // but if you have extra templates/assets in the repo root, keep this.
-        stage('Clone shared library (optional)') {
-            checkout([$class: 'GitSCM',
-                userRemoteConfigs: [[credentialsId: credentialsId, url: 'https://github.com/ankur1825/jenkins-shared-library.git']],
-                branches: [[name: '*/main']],
-                doGenerateSubmoduleConfigurations: false
-            ])
-        }
-
         stage('Check Workspace') {
-            sh 'pwd && ls -lrth'
+            sh 'pwd'
+            sh 'ls -lrth || true'
         }
 
         stage('Load and Run Pipeline') {
-            // Load returns a Script (not a global step). We must call methods on it.
-            def app = load 'jenkins_template/AppPipeline.groovy'
-
-            // Guardrails: make sure the functions exist
-            def hasRun       = app.metaClass.getMetaMethod('run', Map)
-            def hasRunDevops = app.metaClass.getMetaMethod('runDevops', Map)
+            // IMPORTANT: load from the shared library version (the one from @Library), not from workspace
+            def tmpPath = '.loaded_AppPipeline.groovy'
+            writeFile file: tmpPath, text: libraryResource('jenkins_template/AppPipeline.groovy')
+            def pipelineScript = load tmpPath
 
             if (isDevops) {
-                if (!hasRunDevops) {
-                    error "AppPipeline.groovy does not define runDevops(Map). " +
-                          "Create jenkins_template/AppPipeline.groovy with def runDevops(Map params) { ... }"
-                }
-                app.runDevops(params)
+                pipelineScript.runDevops(params)
             } else {
-                if (!hasRun) {
-                    error "AppPipeline.groovy does not define run(Map). " +
-                          "Create jenkins_template/AppPipeline.groovy with def run(Map params) { ... }"
-                }
-                app.run(params)
+                pipelineScript.run(params)
             }
         }
     }
