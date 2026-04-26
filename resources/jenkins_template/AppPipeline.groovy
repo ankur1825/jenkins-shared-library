@@ -302,7 +302,7 @@ def compileAndPackage(String projectTypeRaw) {
             return
 
         case 'springboot':
-        case 'springboot-java':
+        case 'springboot-java11':
             if (fileExists('pom.xml')) {
                 sh 'mvn -B -DskipTests clean package'
                 env.ARTIFACT_PATH = sh(script: "ls -1 target/*.jar | head -n1", returnStdout: true).trim()
@@ -316,13 +316,16 @@ def compileAndPackage(String projectTypeRaw) {
             }
             return
 
-        case 'python':
+        case 'angular':
             sh '''
-              python3 -m pip install --upgrade build wheel
-              python3 -m build
+              if [ -f package-lock.json ]; then npm ci; else npm install; fi
+              npm install -g @angular/cli@latest
+              npm run prodbuild || ng build --configuration=production
+              mkdir -p artifact
+              if [ -d dist ]; then tar -czf artifact/angular-dist.tgz dist; fi
             '''
-            env.ARTIFACT_PATH = sh(script: "ls -1 dist/*.whl 2>/dev/null || ls -1 dist/*.tar.gz | head -n1", returnStdout: true).trim()
-            env.ARTIFACT_NAME = env.ARTIFACT_PATH ? env.ARTIFACT_PATH.split('/').last() : ''
+            env.ARTIFACT_PATH = fileExists('artifact/angular-dist.tgz') ? 'artifact/angular-dist.tgz' : ''
+            env.ARTIFACT_NAME = env.ARTIFACT_PATH ? 'angular-dist.tgz' : ''
             return
 
         case 'nodejs':
@@ -336,20 +339,18 @@ def compileAndPackage(String projectTypeRaw) {
             return
 
         case 'webcomponent':
-        case 'webcomponent(.net)':
-        case '.net':
             sh '''
-              dotnet --info
-              dotnet restore
-              dotnet publish -c Release -o out
-              cd out && zip -qr ../webcomponent.zip . && cd -
+              if [ -f package-lock.json ]; then npm ci; else npm install; fi
+              npm run build
+              mkdir -p artifact
+              if [ -d dist ]; then tar -czf artifact/webcomponent-dist.tgz dist; fi
             '''
-            env.ARTIFACT_PATH = 'webcomponent.zip'
-            env.ARTIFACT_NAME = 'webcomponent.zip'
+            env.ARTIFACT_PATH = fileExists('artifact/webcomponent-dist.tgz') ? 'artifact/webcomponent-dist.tgz' : ''
+            env.ARTIFACT_NAME = env.ARTIFACT_PATH ? 'webcomponent-dist.tgz' : ''
             return
 
         default:
-            error "Unsupported PROJECT_TYPE '${projectTypeRaw}'. Supported: Docker, Springboot, Springboot-java, NodeJs, Python, WebComponent"
+            error "Unsupported PROJECT_TYPE '${projectTypeRaw}'. Supported: Docker, Angular, SpringBoot, SpringBoot-Java11, NodeJs, WebComponent"
     }
 }
 
