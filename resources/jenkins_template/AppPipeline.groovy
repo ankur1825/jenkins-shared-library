@@ -201,45 +201,11 @@ def runDevops(Map params) {
                 }
             }
 
-            if (params.ENABLE_SOAPUI?.toBoolean()) {
-                stage('SoapUI Tests') {
-                    if (!fileExists('tests/soapui/project.xml')) {
-                        error "SoapUI project not found at tests/soapui/project.xml"
-                    }
-                    sh 'testrunner.sh -j -f reports/soapui tests/soapui/project.xml'
-                }
-            }
-
-            if (params.ENABLE_JMETER?.toBoolean()) {
-                stage('JMeter Tests') {
-                    if (!fileExists('tests/jmeter/test.jmx')) { error "JMeter test not found at tests/jmeter/test.jmx" }
-                    sh '''
-                      mkdir -p reports/jmeter
-                      jmeter -n -t tests/jmeter/test.jmx -l reports/jmeter/results.jtl -e -o reports/jmeter/html
-                    '''
-                }
-            }
-
-            if (params.ENABLE_SELENIUM?.toBoolean()) {
-                stage('Selenium UI Tests') {
-                    def ran = false
-                    if (fileExists('pom.xml')) { sh 'mvn -B -Dtest=*UITest* test'; ran = true }
-                    else if (fileExists('package.json')) {
-                        def hasScript = sh(returnStatus:true, script: "node -e \"try{let p=require('./package.json');process.exit(p.scripts&&p.scripts['test:e2e']?0:1)}catch(e){process.exit(1)}\"") == 0
-                        if (hasScript) { sh 'npm ci && npm run test:e2e'; ran = true }
-                    }
-                    if (!ran) { error "No Selenium UI test command found." }
-                }
-            }
-
-            if (params.ENABLE_NEWMAN?.toBoolean()) {
-                stage('Newman/Postman') {
-                    if (!fileExists('tests/postman/collection.json')) {
-                        error "Postman collection not found at tests/postman/collection.json"
-                    }
-                    sh 'newman run tests/postman/collection.json --reporters cli,junit --reporter-junit-export reports/newman/results.xml'
-                }
-            }
+            runSelectedQualityTool('Checkmarx', params.ENABLE_CHECKMARX, params)
+            runSelectedQualityTool('SoapUI', params.ENABLE_SOAPUI, params)
+            runSelectedQualityTool('JMeter', params.ENABLE_JMETER, params)
+            runSelectedQualityTool('Selenium', params.ENABLE_SELENIUM, params)
+            runSelectedQualityTool('Newman', params.ENABLE_NEWMAN, params)
 
             // -------- Build & Scan --------
             stage('Build Docker Image') {
@@ -384,6 +350,123 @@ def publishSns(Map params, String status, String message) {
             --topic-arn '${params.SNS_TOPIC_ARN}' \
             --subject '[Devops Pipeline][${status}] ${params.PROJECT_NAME}' \
             --message file://sns-message.txt
+        """
+    }
+}
+
+def runSelectedQualityTool(String tool, Object enabled, Map params) {
+    if (!enabled?.toString()?.equalsIgnoreCase('true')) {
+        return
+    }
+
+    stage("${tool} Test Suite") {
+        def toolKey = tool.toLowerCase()
+        def reportDir = "reports/${toolKey}"
+        sh "mkdir -p '${reportDir}'"
+
+        try {
+            switch (tool) {
+                case 'Checkmarx':
+                    runCheckmarx(reportDir, params)
+                    break
+                case 'SoapUI':
+                    runSoapUi(reportDir)
+                    break
+                case 'JMeter':
+                    runJMeter(reportDir)
+                    break
+                case 'Selenium':
+                    runSelenium(reportDir)
+                    break
+                case 'Newman':
+                    runNewman(reportDir)
+                    break
+                default:
+                    error "Unsupported quality tool: ${tool}"
+            }
+
+            writeFile file: "${reportDir}/status.txt", text: "${tool} completed successfully\n"
+            publishQualityResults(tool, reportDir, params)
+            publishSns(params, 'SUCCESS', "${tool} test suite completed for ${params.PROJECT_NAME}.")
+        } catch (Exception e) {
+            writeFile file: "${reportDir}/status.txt", text: "${tool} failed: ${e.message}\n"
+            publishQualityResults(tool, reportDir, params)
+            publishSns(params, 'FAILED', "${tool} test suite failed for ${params.PROJECT_NAME}. Reason: ${e.message}")
+            throw e
+        }
+    }
+}
+
+def runCheckmarx(String reportDir, Map params) {
+    def projectName = params.PROJECT_NAME ?: env.JOB_NAME
+    def team = params.CHECKMARX_TEAM ?: ''
+    sh """
+      if command -v cx >/dev/null 2>&1; then
+        cx scan create --project-name '${projectName}' ${team ? "--team '${team}'" : ''} --source . --report-format json --output '${reportDir}/checkmarx.json'
+      elif command -v checkmarx >/dev/null 2>&1; then
+        checkmarx scan --project '${projectName}' --source . --output '${reportDir}/checkmarx.json'
+      else
+        echo 'Checkmarx CLI is not installed on this Jenkins agent.' | tee '${reportDir}/checkmarx.txt'
+        exit 1
+      fi
+    """
+}
+
+def runSoapUi(String reportDir) {
+    if (!fileExists('tests/soapui/project.xml')) {
+        error "SoapUI project not found at tests/soapui/project.xml"
+    }
+    sh "testrunner.sh -j -f '${reportDir}' tests/soapui/project.xml"
+}
+
+def runJMeter(String reportDir) {
+    if (!fileExists('tests/jmeter/test.jmx')) {
+        error "JMeter test not found at tests/jmeter/test.jmx"
+    }
+    sh """
+      jmeter -n -t tests/jmeter/test.jmx -l '${reportDir}/results.jtl' -e -o '${reportDir}/html'
+    """
+}
+
+def runSelenium(String reportDir) {
+    def ran = false
+    if (fileExists('pom.xml')) {
+        sh "mvn -B -Dtest=*UITest* -Dsurefire.reportsDirectory='${reportDir}' test"
+        ran = true
+    } else if (fileExists('package.json')) {
+        def hasScript = sh(returnStatus:true, script: "node -e \"try{let p=require('./package.json');process.exit(p.scripts&&p.scripts['test:e2e']?0:1)}catch(e){process.exit(1)}\"") == 0
+        if (hasScript) {
+            sh """
+              if [ -f package-lock.json ]; then npm ci; else npm install; fi
+              npm run test:e2e -- --outputPath='${reportDir}' || npm run test:e2e
+            """
+            ran = true
+        }
+    }
+    if (!ran) {
+        error "No Selenium UI test command found. Expected Maven UI tests or npm script test:e2e."
+    }
+}
+
+def runNewman(String reportDir) {
+    if (!fileExists('tests/postman/collection.json')) {
+        error "Postman collection not found at tests/postman/collection.json"
+    }
+    sh "newman run tests/postman/collection.json --reporters cli,junit,json --reporter-junit-export '${reportDir}/results.xml' --reporter-json-export '${reportDir}/results.json'"
+}
+
+def publishQualityResults(String tool, String reportDir, Map params) {
+    archiveArtifacts artifacts: "${reportDir}/**", allowEmptyArchive: true, fingerprint: true
+
+    if (!env.ARTIFACT_BUCKET) {
+        echo "ARTIFACT_BUCKET is not configured; skipping S3 upload for ${tool}."
+        return
+    }
+
+    def imageTag = env.IMAGE_TAG ?: (env.BUILD_NUMBER ?: 'manual')
+    withEnv(awsClientEnv(params)) {
+        sh """
+          aws s3 sync '${reportDir}' 's3://${env.ARTIFACT_BUCKET}/devops-pipeline/${params.PROJECT_NAME}/${imageTag}/test-results/${tool.toLowerCase()}/' --region ${env.AWS_REGION}
         """
     }
 }
