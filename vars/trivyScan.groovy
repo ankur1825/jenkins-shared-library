@@ -6,14 +6,20 @@ def call(Map params = [:]) {
 
     def imageName = params.imageName
     def uploadResults = params.get('uploadResults', true) // Default to true
-    def appName = env.APP_NAME
+    def appName = params.get('application', env.APP_NAME)
     def jenkinsJob = env.JOB_NAME
     def buildNumber = env.BUILD_NUMBER
-    def requestedBy = currentBuild.getBuildCauses()[0]?.userId ?: "jenkins@horizonrelevance.com"
+    def requestedBy = params.get('requestedBy', currentBuild.getBuildCauses()[0]?.userId ?: "jenkins@horizonrelevance.com")
+    def failOnSeverity = params.get('failOnSeverity', env.SECURITY_FAIL_ON_SEVERITY ?: 'CRITICAL,HIGH')
+    def scanners = params.get('scanners', env.IMAGE_SECURITY_SCANNERS ?: 'vuln,secret,misconfig')
+    def scanId = "b${buildNumber}-${UUID.randomUUID().toString().take(8)}".toLowerCase()
+    def namespace = params.get('namespace', 'horizon-relevance-dev')
 
-    echo "Starting Trivy Scan..."
-    echo "Scanning Image: ${imageName}"
-    echo "Upload Results: ${uploadResults}"
+    echo "Starting image security analysis."
+    echo "Scanning image: ${imageName}"
+    echo "Blocking severities: ${failOnSeverity}"
+    echo "Scanner set: ${scanners}"
+    echo "Upload results: ${uploadResults}"
     echo "Application: ${appName}"
 
     sh 'mkdir -p trivy-scan-workdir'
@@ -27,16 +33,37 @@ def call(Map params = [:]) {
     }
 
     sh """
-        helm upgrade --install trivy-cli-scan ./trivy-scan-workdir \
-            --namespace horizon-relevance-dev \
-            --set scan.imageName=${imageName} \
-            --set scan.uploadResults=${uploadResults} \
-            --set scan.application=${appName} \
-            --set scan.repoUrl=${params.repoUrl} \
-            --set scan.jenkinsUrl=${env.BUILD_URL} \
-            --set scan.jenkinsJob=${jenkinsJob} \
-            --set scan.buildNumber=${buildNumber} \
-            --set scan.requestedBy=${requestedBy}
+        set -e
+        helm upgrade --install trivy-cli-scan-${scanId} ./trivy-scan-workdir \
+            --namespace ${namespace} \
+            --set-string scan.id=${scanId} \
+            --set-string scan.imageName='${imageName}' \
+            --set-string scan.uploadResults='${uploadResults}' \
+            --set-string scan.application='${appName}' \
+            --set-string scan.repoUrl='${params.repoUrl ?: ''}' \
+            --set-string scan.jenkinsUrl='${env.BUILD_URL}' \
+            --set-string scan.jenkinsJob='${jenkinsJob}' \
+            --set-string scan.buildNumber='${buildNumber}' \
+            --set-string scan.requestedBy='${requestedBy}' \
+            --set-string scan.failOnSeverity='${failOnSeverity}' \
+            --set-string scan.scanners='${scanners}'
+
+        if ! kubectl wait --namespace ${namespace} \
+            --for=condition=complete \
+            job -l horizonrelevance.com/scan-id=${scanId} \
+            --timeout=20m; then
+            kubectl logs --namespace ${namespace} \
+              -l horizonrelevance.com/scan-id=${scanId} \
+              --all-containers=true --tail=-1 || true
+            helm uninstall trivy-cli-scan-${scanId} --namespace ${namespace} || true
+            exit 1
+        fi
+
+        kubectl logs --namespace ${namespace} \
+          -l horizonrelevance.com/scan-id=${scanId} \
+          --all-containers=true --tail=-1 || true
+
+        helm uninstall trivy-cli-scan-${scanId} --namespace ${namespace} || true
     """
 
     // sh """
@@ -46,5 +73,5 @@ def call(Map params = [:]) {
     //         --set scan.uploadResults=${uploadResults}
     // """
 
-    echo "✅ Trivy scan triggered successfully for ${imageName}"
+    echo "Image security analysis completed for ${imageName}"
 }

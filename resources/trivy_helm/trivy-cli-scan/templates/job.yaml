@@ -1,8 +1,11 @@
 apiVersion: batch/v1
 kind: Job
 metadata:
-  name: trivy-scan-{{ randAlphaNum 5 | lower }}
+  name: trivy-scan-{{ .Values.scan.id | default (randAlphaNum 5 | lower) }}
   namespace: {{ .Values.namespace }}
+  labels:
+    app.kubernetes.io/name: trivy-cli-scan
+    horizonrelevance.com/scan-id: {{ .Values.scan.id | quote }}
 spec:
   backoffLimit: 0
   template:
@@ -26,6 +29,10 @@ spec:
         - "{{ .Values.scan.buildNumber }}"
         - "--requested-by"
         - "{{ .Values.scan.requestedBy }}"
+        - "--fail-on-severity"
+        - "{{ .Values.scan.failOnSeverity }}"
+        - "--scanners"
+        - "{{ .Values.scan.scanners }}"
         {{- if .Values.scan.uploadResults }}
         - "--upload"
         {{- end }}

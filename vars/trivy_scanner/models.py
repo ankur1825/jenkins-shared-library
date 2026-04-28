@@ -1,5 +1,7 @@
-# models.py
 from dataclasses import dataclass
+from typing import Optional
+
+
 @dataclass
 class Vulnerability:
     target: str
@@ -7,14 +9,18 @@ class Vulnerability:
     installed_version: str
     vulnerability_id: str
     severity: str
-    title: str
-    description: str
-    fixed_version: str
+    title: str = ""
+    description: str = ""
+    fixed_version: str = "N/A"
     cvss_score: float = 0.0
     exploitability_score: float = 0.0
     application: str = ""
     jenkins_job: str = ""
     build_number: int = 0
+    source: str = "Trivy"
+    line: Optional[int] = None
+    rule: str = ""
+    status: str = "Open"
 
     def calculate_risk_score(self):
         severity_map = {
@@ -31,4 +37,3 @@ class Vulnerability:
 
         risk_score = (severity_score * 0.4) + (self.cvss_score * 0.3) + (self.exploitability_score * 0.2) + (fix_available_score * 0.1)
         return round(risk_score, 2)
-

@@ -2,6 +2,10 @@
 def run(Map params) {
     node {
         try {
+            stage('Validate License') {
+                validateLicense(params + [PIPELINE_NAME: params.SERVICE_NAME ?: 'Application Pipeline'])
+            }
+
             if (params.REPO_URL) {
                 stage('Clone Repository') {
                     echo "Cloning repository: ${params.REPO_URL}"
@@ -41,7 +45,7 @@ def run(Map params) {
             }
 
             if (params.ENABLE_SONARQUBE?.toBoolean()) {
-                stage('Static Code Analysis') {
+                stage('Code Quality Analysis') {
                     def scannerHome = tool 'SONAR-SCANNER'
 
                     if (!fileExists('sonar-project.properties')) {
@@ -56,7 +60,7 @@ def run(Map params) {
                     if (!sonarProjectKey) {
                         error "sonar.projectKey is missing or empty!"
                     }
-                    echo "Sonar Project Key: ${sonarProjectKey}"
+                    echo "Code analysis project key: ${sonarProjectKey}"
 
                     withSonarQubeEnv('sonarqube') {
                         withCredentials([string(credentialsId: 'sonarqube-token', variable: 'SONAR_TOKEN')]) {
@@ -86,18 +90,18 @@ def run(Map params) {
             }
 
             if (params.ENABLE_TRIVY?.toBoolean()) {
-                stage('Trivy Scan Base Image') {
-                    trivyScan(imageName: env.BASE_IMAGE, uploadResults: true, application: env.APP_NAME, buildNumber: env.BUILD_NUMBER, jenkinsJob: env.JOB_NAME)
+                stage('Base Image Security Analysis') {
+                    trivyScan(imageName: env.BASE_IMAGE, uploadResults: true, application: env.APP_NAME, repoUrl: params.REPO_URL, requestedBy: params.REQUESTED_BY)
                 }
             }
 
             if (params.ENABLE_OPA?.toBoolean()) {
-                stage('OPA Policy Evaluation') {
+                stage('Policy Validation') {
                     def imageName = "${env.PRIVATE_REPO}/${env.APP_NAME}:${env.TAG}".toLowerCase()
                     opaEnsureServerRunning()
                     def opaInput = createOPAInput(imageName, env.TAG)
                     def enrichedOPAResults = opaEvaluateCurl(inputJson: opaInput, imageName: imageName, application: env.APP_NAME, jobName: env.JOB_NAME, buildNumber: env.BUILD_NUMBER, requestedBy: env.BUILD_USER_ID)
-                    echo "OPA Risk Evaluation Complete. Total Enriched Risks: ${enrichedOPAResults.size()}"
+                    echo "Policy validation complete. Total findings: ${enrichedOPAResults.size()}"
                 }
             }
 
@@ -107,9 +111,9 @@ def run(Map params) {
             }
 
             if (params.ENABLE_TRIVY?.toBoolean()) {
-                stage('Trivy Scan Built Image') {
+                stage('Image Security Analysis') {
                     def imageName = "${env.PRIVATE_REPO}/${env.APP_NAME}:${env.TAG}".toLowerCase()
-                    trivyScan(imageName: imageName, uploadResults: true, application: env.APP_NAME, buildNumber: env.BUILD_NUMBER, jenkinsJob: env.JOB_NAME)
+                    trivyScan(imageName: imageName, uploadResults: true, application: env.APP_NAME, repoUrl: params.REPO_URL, requestedBy: params.REQUESTED_BY)
                 }
             }
 
@@ -146,6 +150,10 @@ def runDevops(Map params) {
     */
     node {
         try {
+            stage('Validate License') {
+                validateLicense(params + [PIPELINE_NAME: 'Devops Pipeline'])
+            }
+
             stage('Checkout Application Repo') {
                 if (!params.REPO_URL || !params.REPO_URL.toString().contains('/')) {
                     error "REPO_URL is invalid ('${params.REPO_URL}'). Provide a full Git URL, e.g. https://github.com/org/repo.git"
@@ -172,8 +180,14 @@ def runDevops(Map params) {
                     if (fileExists('Dockerfile')) {
                         env.BASE_IMAGE = sh(script: "awk '/^FROM/ {print \$2; exit}' Dockerfile", returnStdout: true).trim()
                         echo "Base Docker Image: ${env.BASE_IMAGE}"
+                    } else {
+                        error "Dockerfile is required because the product always creates and publishes a container image."
                     }
                 }
+            }
+
+            stage('Security Preflight') {
+                runSecurityPreflight(params)
             }
 
             // -------- Compile & Package (generic) --------
@@ -183,11 +197,20 @@ def runDevops(Map params) {
 
             // -------- QUALITY GATES --------
             if (params.ENABLE_SONARQUBE?.toBoolean()) {
-                stage('SonarQube') {
+                stage('Code Quality Analysis') {
                     def scannerHome = tool 'SONAR-SCANNER'
                     if (!fileExists('sonar-project.properties')) {
                         error "sonar-project.properties not found!"
                     }
+                    def propsText = readFile 'sonar-project.properties'
+                    def sonarProjectKey = propsText.readLines()
+                        .find { it.trim().startsWith('sonar.projectKey=') }
+                        ?.split('=', 2)?.getAt(1)?.trim()
+                    if (!sonarProjectKey) {
+                        error "sonar.projectKey is missing or empty!"
+                    }
+                    echo "Code analysis project key: ${sonarProjectKey}"
+
                     withSonarQubeEnv('sonarqube') {
                         withCredentials([string(credentialsId: 'sonarqube-token', variable: 'SONAR_TOKEN')]) {
                             sh """
@@ -198,6 +221,7 @@ def runDevops(Map params) {
                         }
                     }
                     timeout(time: 10, unit: 'MINUTES') { waitForQualityGate abortPipeline: false }
+                    postProcessSonar(sonarProjectKey, params.REPO_URL, params.REQUESTED_BY ?: 'unknown')
                 }
             }
 
@@ -218,9 +242,9 @@ def runDevops(Map params) {
             }
 
             if (params.ENABLE_TRIVY?.toBoolean()) {
-                stage('Trivy Scan Built Image') {
+                stage('Image Security Analysis') {
                     def imageName = "${env.ECR_URI}:${env.IMAGE_TAG}".toLowerCase()
-                    trivyScan(imageName: imageName, uploadResults: true, application: env.APP_NAME, buildNumber: env.BUILD_NUMBER, jenkinsJob: env.JOB_NAME)
+                    trivyScan(imageName: imageName, uploadResults: true, application: env.APP_NAME, repoUrl: params.REPO_URL, requestedBy: params.REQUESTED_BY)
                 }
             }
 
@@ -354,12 +378,88 @@ def publishSns(Map params, String status, String message) {
     }
 }
 
+def runSecurityPreflight(Map params = [:]) {
+    def failOnSeverity = (params.SECURITY_FAIL_ON_SEVERITY ?: env.SECURITY_FAIL_ON_SEVERITY ?: 'CRITICAL,HIGH').toString()
+
+    sh """
+      set -e
+      mkdir -p security-preflight
+
+      echo "Checking workspace for high-risk secret patterns..."
+      set +e
+      grep -RInE '(-----BEGIN (RSA |EC |OPENSSH |DSA )?PRIVATE KEY-----|aws_secret_access_key|AWS_SECRET_ACCESS_KEY|password[[:space:]]*[:=][[:space:]]*[^[:space:]]+|token[[:space:]]*[:=][[:space:]]*[^[:space:]]+)' . \\
+        --exclude-dir=.git \\
+        --exclude-dir=node_modules \\
+        --exclude-dir=target \\
+        --exclude-dir=build \\
+        --exclude-dir=dist \\
+        --exclude='package-lock.json' \\
+        --exclude='*.png' \\
+        --exclude='*.jpg' \\
+        --exclude='*.jpeg' \\
+        > security-preflight/secrets.txt
+      secret_status=\\$?
+      set -e
+      if [ "\\$secret_status" -eq 0 ]; then
+        echo "Potential secrets detected in source. See security-preflight/secrets.txt"
+        exit 1
+      fi
+
+      if find . -name '*.tf' -not -path './.git/*' | grep -q .; then
+        echo "Terraform files detected. Running IaC hygiene checks."
+        if command -v terraform >/dev/null 2>&1; then
+          terraform fmt -check -recursive | tee security-preflight/terraform-fmt.txt
+        else
+          echo "terraform CLI not installed; skipping terraform fmt check." | tee security-preflight/terraform-fmt.txt
+        fi
+      fi
+
+      if command -v trivy >/dev/null 2>&1; then
+        echo "Running filesystem IaC/secret security analysis."
+        trivy fs --format json --scanners secret,config --severity '${failOnSeverity}' --exit-code 1 \\
+          --output security-preflight/filesystem-security.json .
+      else
+        echo "trivy CLI not installed on this Jenkins agent; filesystem scan is handled by image analysis later when enabled." \\
+          | tee security-preflight/filesystem-security.txt
+      fi
+    """
+
+    def manifestCandidates = sh(
+        script: "find . \\( -path './k8s/*' -o -path './kubernetes/*' -o -path './manifests/*' \\) -type f \\( -name '*.yaml' -o -name '*.yml' \\) -not -path './.git/*' | head -n 1",
+        returnStdout: true
+    ).trim()
+
+    if (manifestCandidates) {
+        sh 'mkdir -p security-preflight/opa-policies/helpers security-preflight/opa-policies/deny security-preflight/opa-policies/violation security-preflight/opa-policies/warn'
+        writeFile file: 'security-preflight/opa-policies/deny/deny.rego', text: libraryResource('policy/deny/deny.rego')
+        writeFile file: 'security-preflight/opa-policies/helpers/kubernetes.rego', text: libraryResource('policy/helpers/kubernetes.rego')
+        writeFile file: 'security-preflight/opa-policies/violation/violation.rego', text: libraryResource('policy/violation/violation.rego')
+        writeFile file: 'security-preflight/opa-policies/warn/warn.rego', text: libraryResource('policy/warn/warn.rego')
+        sh """
+          if command -v conftest >/dev/null 2>&1; then
+            manifest_dirs=""
+            [ -d k8s ] && manifest_dirs="\\$manifest_dirs k8s"
+            [ -d kubernetes ] && manifest_dirs="\\$manifest_dirs kubernetes"
+            [ -d manifests ] && manifest_dirs="\\$manifest_dirs manifests"
+            conftest test \\$manifest_dirs -p security-preflight/opa-policies --output json \\
+              > security-preflight/kubernetes-policy.json
+          else
+            echo "conftest CLI not installed; skipping Kubernetes manifest policy validation." \\
+              | tee security-preflight/kubernetes-policy.txt
+          fi
+        """
+    }
+
+    archiveArtifacts artifacts: 'security-preflight/**', allowEmptyArchive: true
+}
+
 def runSelectedQualityTool(String tool, Object enabled, Map params) {
     if (!enabled?.toString()?.equalsIgnoreCase('true')) {
         return
     }
 
-    stage("${tool} Test Suite") {
+    def displayName = qualityToolDisplayName(tool)
+    stage("${displayName}") {
         def toolKey = tool.toLowerCase()
         def reportDir = "reports/${toolKey}"
         sh "mkdir -p '${reportDir}'"
@@ -385,15 +485,32 @@ def runSelectedQualityTool(String tool, Object enabled, Map params) {
                     error "Unsupported quality tool: ${tool}"
             }
 
-            writeFile file: "${reportDir}/status.txt", text: "${tool} completed successfully\n"
+            writeFile file: "${reportDir}/status.txt", text: "${displayName} completed successfully\n"
             publishQualityResults(tool, reportDir, params)
-            publishSns(params, 'SUCCESS', "${tool} test suite completed for ${params.PROJECT_NAME}.")
+            publishSns(params, 'SUCCESS', "${displayName} completed for ${params.PROJECT_NAME}.")
         } catch (Exception e) {
-            writeFile file: "${reportDir}/status.txt", text: "${tool} failed: ${e.message}\n"
+            writeFile file: "${reportDir}/status.txt", text: "${displayName} failed: ${e.message}\n"
             publishQualityResults(tool, reportDir, params)
-            publishSns(params, 'FAILED', "${tool} test suite failed for ${params.PROJECT_NAME}. Reason: ${e.message}")
+            publishSns(params, 'FAILED', "${displayName} failed for ${params.PROJECT_NAME}. Reason: ${e.message}")
             throw e
         }
+    }
+}
+
+def qualityToolDisplayName(String tool) {
+    switch (tool) {
+        case 'Checkmarx':
+            return 'Static Application Security'
+        case 'SoapUI':
+            return 'Service Contract Testing'
+        case 'JMeter':
+            return 'Performance Load Testing'
+        case 'Selenium':
+            return 'Browser Workflow Testing'
+        case 'Newman':
+            return 'API Regression Testing'
+        default:
+            return 'Quality Gate'
     }
 }
 
@@ -510,8 +627,16 @@ def compileAndPackage(String projectTypeRaw) {
         case 'nodejs':
             sh '''
               if [ -f package-lock.json ]; then npm ci; else npm install; fi
-              npm run build || npm run build:prod || true
-              mkdir -p artifact && tar -czf artifact/app-dist.tgz dist || tar -czf artifact/app-dist.tgz build || true
+              npm run build || npm run build:prod
+              mkdir -p artifact
+              if [ -d dist ]; then
+                tar -czf artifact/app-dist.tgz dist
+              elif [ -d build ]; then
+                tar -czf artifact/app-dist.tgz build
+              else
+                echo "No dist/ or build/ output found after Node.js build."
+                exit 1
+              fi
             '''
             env.ARTIFACT_PATH = 'artifact/app-dist.tgz'
             env.ARTIFACT_NAME = 'app-dist.tgz'

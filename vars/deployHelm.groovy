@@ -2,7 +2,7 @@ import groovy.json.JsonOutput
 
 def call(Map params = [:]) {
     def configPath = 'config.json'
-    echo "OPA Flag Received: ${params.ENABLE_OPA}"
+    echo "Policy validation enabled: ${params.ENABLE_OPA}"
 
     if (!fileExists(configPath)) {
         error "config.json not found in workspace!"
@@ -47,7 +47,7 @@ def call(Map params = [:]) {
 
     // OPA Scan - Kubernetes Policies
     if (params.ENABLE_OPA?.toBoolean()) {
-        echo "🔍 Running OPA policy check for Kubernetes manifests..."
+        echo "Running policy validation for Kubernetes manifests."
 
         sh 'mkdir -p opa-policies/helpers opa-policies/deny opa-policies/violation opa-policies/warn'
 
@@ -58,7 +58,10 @@ def call(Map params = [:]) {
 
         sh """
             helm template ${helmChartDir} > rendered.yaml
-            conftest test rendered.yaml -p ./opa-policies --output json > opa-k8s-result.json || true
+            set +e
+            conftest test rendered.yaml -p ./opa-policies --output json > opa-k8s-result.json
+            echo \$? > opa-k8s-exit-code.txt
+            set -e
         """
 
         if (!fileExists('opa-k8s-result.json') || readFile('opa-k8s-result.json').trim() == '') {
@@ -69,7 +72,7 @@ def call(Map params = [:]) {
         def violations = []
 
         opaResult.each { entry ->
-            entry.failures.each { failure ->
+            (entry.failures ?: []).each { failure ->
                 violations << [
                     source: 'OPA-Kubernetes',
                     target: userConfig.appName,
@@ -84,7 +87,9 @@ def call(Map params = [:]) {
             }
         }
 
-        if (violations.size() > 0) {
+        def conftestExitCode = readFile('opa-k8s-exit-code.txt').trim()
+
+        if (violations.size() > 0 || conftestExitCode != '0') {
             def jobName = env.JOB_NAME ?: 'unknown'
             def buildNumber = env.BUILD_NUMBER ?: '0'
             def jenkinsUrl = "${env.JENKINS_URL}/job/${jobName}/${buildNumber}"
@@ -100,19 +105,16 @@ def call(Map params = [:]) {
                 }
             ]
 
-            // 🛠️ Log full JSON payload
-            echo "OPA-Kubernetes Payload JSON:\n" + JsonOutput.prettyPrint(JsonOutput.toJson(opaPayload))
-
             writeJSON file: 'opa-k8s-upload.json', json: opaPayload, pretty: 2
 
-            sh "curl -s -X POST https://horizonrelevance.com/pipeline/api/opa/risks/ -H 'Content-Type: application/json' -d @opa-k8s-upload.json"
+            sh "curl -fsS -X POST https://horizonrelevance.com/pipeline/api/opa/risks/ -H 'Content-Type: application/json' -d @opa-k8s-upload.json"
 
-            error("OPA policy violations found in Helm/K8s manifests. Failing pipeline.")
+            error("Policy violations found in Helm/Kubernetes manifests. Failing pipeline.")
         } else {
-            echo "No OPA Kubernetes policy violations found."
+            echo "No Kubernetes policy violations found."
         }
     } else {
-        echo "OPA policy scan is disabled by configuration. Skipping."
+        echo "Policy validation is disabled by configuration. Skipping."
     }
 
     def releaseName = userConfig.appName.toLowerCase().replaceAll(/[^a-z0-9\-]/, '-')

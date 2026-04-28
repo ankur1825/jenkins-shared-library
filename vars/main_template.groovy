@@ -27,7 +27,14 @@ def call(Map params = [:]) {
         stage('Print Incoming Parameters') {
             script {
                 echo "==== Incoming Parameters ===="
-                params.each { k, v -> echo "${k} = ${v}" }
+                params.each { k, v ->
+                    def sensitive = k.toString().toUpperCase().contains('TOKEN') ||
+                                    k.toString().toUpperCase().contains('PASSWORD') ||
+                                    k.toString().toUpperCase().contains('SECRET') ||
+                                    k.toString().toUpperCase().contains('LICENSE_KEY') ||
+                                    k.toString().toUpperCase().contains('SIGNATURE')
+                    echo "${k} = ${sensitive ? '****' : v}"
+                }
                 echo "Router says isDevops = ${isDevops}"
                 echo "============================="
             }
