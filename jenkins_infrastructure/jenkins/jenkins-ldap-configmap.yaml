@@ -4,44 +4,69 @@ metadata:
   name: jenkins-jcasc-config
   namespace: horizon-relevance-dev
 data:
-  ldap-auth.yaml: |
+  00-ldap-and-auth.yaml: |
     jenkins:
       securityRealm:
         ldap:
           configurations:
-            - server: "ldaps://ldap.jumpcloud.com:636"
-              rootDN: "o=6817d9a0d50cd4b1b5b81ba7,dc=jumpcloud,dc=com"
-              managerDN: "uid=ankur.kashyap,ou=Users,o=6817d9a0d50cd4b1b5b81ba7,dc=jumpcloud,dc=com"
-              managerPasswordSecret: "${LDAP_MANAGER_PASSWORD}"
-              userSearchBase: "ou=Users"
-              userSearch: "uid={0}"
-              groupSearchBase: "ou=Users"
-              groupMembershipStrategy:
-                fromGroupSearch: {}
+            - server: "ldap://openldap.horizon-relevance-dev.svc.cluster.local:389"
+              rootDN: "dc=horizonrelevance,dc=local"
               inhibitInferRootDN: true
+              ignoreIfUnavailable: true
+
+              # Manager bind for LDAP searches.
+              managerDN: "cn=admin,dc=horizonrelevance,dc=local"
+              managerPasswordSecret: "${LDAP_MANAGER_PASSWORD}"
+
+              # Users can log in with uid or email.
+              userSearchBase: "ou=users"
+              userSearch: "(|(uid={0})(mail={0}))"
+              displayNameAttributeName: "cn"
+              mailAddressAttributeName: "mail"
+
+              # OpenLDAP groups are groupOfNames entries under ou=groups.
+              groupSearchBase: "ou=groups"
+              groupMembershipStrategy:
+                fromGroupSearch:
+                  filter: "(member={0})"
+
           disableMailAddressResolver: false
+          userIdStrategy: caseInsensitive
+          groupIdStrategy: caseInsensitive
 
       authorizationStrategy:
-        projectMatrix:
-          entries:
-            - user:
-                name: "admin"
+        roleBased:
+          roles:
+            global:
+              - name: "admin"
                 permissions:
                   - "Overall/Administer"
-            - user:
-                name: "ankur.kashyap"
-                permissions:
-                  - "Overall/Administer"
-            - user:
-                name: "shaileja.sharma"
-                permissions:
-                  - "Overall/Administer"      
-            - group:
-                name: "authenticated"
-                permissions:
-                  - "Job/Read"
                   - "Job/Build"
-                  - "Job/Cancel"
-                  - "Job/Workspace"
+                  - "Job/Read"
+                  - "Credentials/View"
+                entries:
+                  - user: "ankur.kashyap"
+                  - group: "admins"
+              - name: "authenticated-read"
+                permissions:
                   - "Overall/Read"
                   - "View/Read"
+                  - "Job/Read"
+                entries:
+                  - group: "authenticated"
+
+    unclassified:
+      location:
+        url: "https://horizonrelevance.com/jenkins"
+      globalLibraries:
+        libraries:
+          - name: "jenkins-shared-library"
+            defaultVersion: "main"
+            implicit: false
+            allowVersionOverride: true
+            includeInChangesets: true
+            retriever:
+              modernSCM:
+                scm:
+                  git:
+                    remote: "https://github.com/ankur1825/jenkins-shared-library.git"
