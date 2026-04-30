@@ -3,6 +3,8 @@ image:
   tag: 1.1.1
   pullPolicy: Always
 
+namespace: horizon-relevance-dev
+
 scan:
   imageName: "myrepo/myimage:mytag"
   uploadResults: true
@@ -11,4 +13,7 @@ scan:
   buildNumber: 0   
   repoUrl: ""                 
   jenkinsUrl: ""              
-  requestedBy: ""          
+  requestedBy: ""
+  failOnSeverity: "CRITICAL,HIGH"
+  scanners: "vuln,secret,misconfig"
+  id: ""

@@ -3,17 +3,17 @@ def call(String projectKey, String repoUrl, String triggeredBy) {
         error "Sonar project key is empty or null – cannot proceed with post-processing."
     }
 
-    echo "Post-processing SonarQube results for projectKey: ${projectKey}"
+    echo "Post-processing code analysis results for project key: ${projectKey}"
 
     writeFile file: 'scripts/process_sonar_ml.py', text: libraryResource('sonar/process_sonar_ml.py')
 
     withCredentials([usernamePassword(credentialsId: 'sonar_secret', usernameVariable: 'SONAR_USER', passwordVariable: 'SONAR_PASS')]) {
         withEnv(["PROJECT_KEY=${projectKey}"]) {
             sh '''
-                echo "Downloading issues from SonarQube API for project: $PROJECT_KEY"
-                curl -u "$SONAR_USER:$SONAR_PASS" \
-                     "https://horizonrelevance.com/sonarqube/api/issues/search?componentKeys=$PROJECT_KEY&statuses=OPEN" \
-                     -o issues.json
+                echo "Downloading code analysis issues for project: $PROJECT_KEY"
+                curl -fsS -u "$SONAR_USER:$SONAR_PASS" \
+	                 "https://horizonrelevance.com/sonarqube/api/issues/search?componentKeys=$PROJECT_KEY&statuses=OPEN,CONFIRMED,REOPENED&types=VULNERABILITY,BUG,CODE_SMELL&ps=500" \
+	                 -o issues.json
 
                 if [ ! -s issues.json ]; then
                     echo "[INFO] No issues found. Creating empty output file."
@@ -33,7 +33,7 @@ def call(String projectKey, String repoUrl, String triggeredBy) {
     if (!noIssues) {
         def output = sh(script: 'python3 scripts/process_sonar_ml.py issues.json ai_sonar_results.json', returnStdout: true).trim()
         if (output.contains("FAIL_PIPELINE=true")) {
-            echo "[ERROR] SonarQube scan found High or Critical issues."
+            echo "[ERROR] Code analysis found blocking issues."
             failPipeline = true  // defer error call until after upload
         }
 
@@ -51,20 +51,20 @@ def call(String projectKey, String repoUrl, String triggeredBy) {
                 cat ai_sonar_results.json >> wrapper.json
                 echo '}' >> wrapper.json
 
-                curl -s -X POST https://horizonrelevance.com/pipeline/api/upload_vulnerabilities \\
+                curl -fsS -X POST https://horizonrelevance.com/pipeline/api/upload_vulnerabilities \\
                     -H "Content-Type: application/json" \\
-                    -d @wrapper.json
+                    --data-binary @wrapper.json
             else
-                echo "[INFO] No SonarQube vulnerabilities to upload."
+                echo "[INFO] No code analysis findings to upload."
             fi
         """
     } else {
-        echo "[INFO] No SonarQube issues to process."
+        echo "[INFO] No code analysis issues to process."
     }
 
     if (failPipeline) {
-        error "Failing pipeline due to High/Critical SonarQube issues."
+        error "Failing pipeline due to blocking code analysis issues."
     }
 
-    echo "Post-processing complete. AI-enhanced SonarQube vulnerabilities handled."
+    echo "Post-processing complete. Code analysis findings handled."
 }

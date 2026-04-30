@@ -72,14 +72,17 @@ from api_client import upload_vulnerabilities
 @click.option('--repo-url', required=True, help='GitHub repo URL associated with this image.')
 @click.option('--jenkins-url', required=True, help='Jenkins build URL.')
 @click.option('--requested-by', required=True, help='User who triggered the Jenkins job.')
-def main(image, upload, application, jenkins_job, build_number, repo_url, jenkins_url, requested_by):
-    print(f"Scanning Docker image: {image}")
-    scan_image(image)
+@click.option('--fail-on-severity', default='CRITICAL,HIGH', help='Comma-separated severities that fail the scan.')
+@click.option('--scanners', default='vuln,secret,misconfig', help='Comma-separated scanner types to run.')
+def main(image, upload, application, jenkins_job, build_number, repo_url, jenkins_url, requested_by, fail_on_severity, scanners):
+    print(f"Running image security analysis for: {image}")
+    scan_image(image, scanners=scanners)
 
     vulnerabilities = parse_trivy_output("trivy-report.json")
-    print(f"✅ Scan complete. Found {len(vulnerabilities)} vulnerabilities.\n")
+    print(f"Scan complete. Found {len(vulnerabilities)} security findings.\n")
 
-    blocking = [v for v in vulnerabilities if v.severity.upper() in {"CRITICAL", "HIGH"}]
+    blocking_severities = {s.strip().upper() for s in fail_on_severity.split(",") if s.strip()}
+    blocking = [v for v in vulnerabilities if (v.severity or "").upper() in blocking_severities]
 
     for v in vulnerabilities:
         print(f"- {v.severity}: {v.package_name} ({v.vulnerability_id})")
@@ -100,12 +103,11 @@ def main(image, upload, application, jenkins_job, build_number, repo_url, jenkin
         )
         print("Upload complete.")
 
-    # Fail pipeline on CRITICAL or HIGH
     if blocking:
-        print(f"Build failed due to {len(blocking)} (CRITICAL or HIGH vulnerabilities).")
-    #    sys.exit(1)    
+        print(f"Build failed due to {len(blocking)} blocking findings matching: {', '.join(sorted(blocking_severities))}.")
+        sys.exit(1)
 
-    print("No blocking vulnerabilities. Pipeline can proceed.")    
+    print("No blocking image security findings. Pipeline can proceed.")
 
 if __name__ == "__main__":
     main()

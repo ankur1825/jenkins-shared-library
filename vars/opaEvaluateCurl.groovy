@@ -12,19 +12,22 @@ def call(Map params = [:]) {
     def buildNumber = params.get('buildNumber')
     def requestedBy = params.get('requestedBy')
 
-    echo "Evaluating OPA Policy..."
+    echo "Running policy validation."
     writeFile file: 'opa-input.json', text: inputJson
 
     def opaResponse = sh(script: """
-        curl -s -X POST ${opaUrl} -d @opa-input.json -H "Content-Type: application/json"
+        curl -fsS -X POST ${opaUrl} -d @opa-input.json -H "Content-Type: application/json"
     """, returnStdout: true).trim()
-
-    echo "OPA Response: ${opaResponse}"
 
     def opaResult = readJSON text: opaResponse
 
-    if (!opaResult?.result) {
-        error "OPA policy evaluation failed: ${opaResult.warning ?: 'No result returned.'}"
+    if (!opaResult.containsKey('result')) {
+        error "Policy validation failed: ${opaResult.warning ?: 'No result returned.'}"
+    }
+
+    if (!opaResult.result) {
+        echo "Policy validation completed with no blocking findings."
+        return []
     }
 
     def enriched = []
@@ -43,17 +46,17 @@ def call(Map params = [:]) {
             severity          : severity,
             risk_score        : score,
             description       : msg,
-            remediation       : "Review policy",
+            remediation       : "Review and remediate the policy violation before deployment.",
             jenkins_job       : jobName,
             build_number      : buildNumber,
-            jenkins_url       : "https://horizonrelevance.com/jenkins//job/${jobName}/${buildNumber}"
+            jenkins_url       : "${env.JENKINS_URL ?: 'https://horizonrelevance.com/jenkins'}/job/${jobName}/${buildNumber}"
         ]
     }
 
     // Construct the final payload with the required top-level fields.
     def payload = [
         application   : application,
-        scanner_type  : "OPA",
+        scanner_type  : "Policy Validation",
         job_name      : jobName,
         build_number  : buildNumber,
         requested_by  : requestedBy,
@@ -63,7 +66,7 @@ def call(Map params = [:]) {
     writeJSON file: "opa-risk-upload.json", json: payload, pretty: 4
 
     sh """
-        curl -s -X POST ${backendUrl} \
+        curl -fsS -X POST ${backendUrl} \
             -H "Content-Type: application/json" \
             -d @opa-risk-upload.json
     """
