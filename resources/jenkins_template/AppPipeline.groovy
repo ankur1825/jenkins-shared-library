@@ -309,7 +309,7 @@ def runDevops(Map params) {
 
             // -------- Deploy --------
             stage("Deploy (${params.TARGET_ENV})") {
-                deployHelm(ENABLE_OPA: params.ENABLE_OPA, TARGET_ENV: params.TARGET_ENV ?: 'EKS-NONPROD')
+                deployHelm(params + [ENABLE_OPA: params.ENABLE_OPA, TARGET_ENV: params.TARGET_ENV ?: 'EKS-NONPROD'])
             }
 
         } catch (Exception e) {
@@ -329,8 +329,213 @@ def runDevops(Map params) {
     }
 }
 
-def awsClientEnv(Map params) {
-    def roleArn = (params.CLIENT_AWS_ROLE_ARN ?: '').toString().trim()
+// ================== PROD DEVOPS PIPELINE ==================
+def runProdDevops(Map params) {
+    /*
+      Production promotion pipeline:
+      - does not checkout source
+      - does not build image
+      - reads image.json/templateconfiguration.json from client S3
+      - promotes immutable image digest to production tag/repository
+      - requires approval before deployment
+    */
+    node {
+        try {
+            stage('Validate License') {
+                validateLicense(params + [PIPELINE_NAME: 'Prod Devops Pipeline'])
+            }
+
+            stage('Load Release Metadata') {
+                script {
+                    env.AWS_REGION = (params.AWS_REGION ?: 'us-east-1').toString().trim()
+                    env.ARTIFACT_BUCKET = (params.ARTIFACT_BUCKET ?: '').toString().trim()
+                    env.ARTIFACT_PREFIX = (params.ARTIFACT_PREFIX ?: '').toString().trim().replaceAll('^/|/$', '')
+                    env.IMAGE_JSON_PATH = (params.IMAGE_JSON_PATH ?: "${env.ARTIFACT_PREFIX}/image.json").toString().trim().replaceAll('^/', '')
+                    env.TEMPLATE_CONFIG_PATH = (params.TEMPLATE_CONFIG_PATH ?: "${env.ARTIFACT_PREFIX}/templateconfiguration.json").toString().trim().replaceAll('^/', '')
+                    env.SOURCE_ECR_REGISTRY = (params.SOURCE_ECR_REGISTRY ?: '').toString().trim()
+                    env.SOURCE_ECR_REPOSITORY = (params.SOURCE_ECR_REPOSITORY ?: params.PROJECT_NAME ?: '').toString().trim()
+                    env.TARGET_ECR_REGISTRY = (params.TARGET_ECR_REGISTRY ?: '').toString().trim()
+                    env.TARGET_ECR_REPOSITORY = (params.TARGET_ECR_REPOSITORY ?: params.PROJECT_NAME ?: '').toString().trim()
+                    env.TARGET_IMAGE_TAG = (params.TARGET_IMAGE_TAG ?: 'prod').toString().trim()
+                    env.TARGET_ENV = (params.TARGET_ENV ?: 'EKS-PROD').toString().trim()
+                    env.APP_NAME = env.TARGET_ECR_REPOSITORY
+
+                    if (!env.ARTIFACT_BUCKET || !env.IMAGE_JSON_PATH || !env.SOURCE_ECR_REGISTRY || !env.SOURCE_ECR_REPOSITORY || !env.TARGET_ECR_REGISTRY || !env.TARGET_ECR_REPOSITORY) {
+                        error "Missing production promotion inputs. Need artifact bucket/path and source/target ECR settings."
+                    }
+                    if (!env.TARGET_ENV.toUpperCase().contains('PROD')) {
+                        error "Prod Devops Pipeline only supports production target environments."
+                    }
+
+                    withEnv(awsClientEnv(params, 'SOURCE_AWS_ROLE_ARN')) {
+                        sh """
+                          set -e
+                          aws s3 cp s3://${env.ARTIFACT_BUCKET}/${env.IMAGE_JSON_PATH} image.json --region ${env.AWS_REGION}
+                          aws s3 cp s3://${env.ARTIFACT_BUCKET}/${env.TEMPLATE_CONFIG_PATH} templateconfiguration.json --region ${env.AWS_REGION}
+                          test -s image.json
+                          test -s templateconfiguration.json
+                        """
+                    }
+
+                    def imageMeta = readJSON file: 'image.json'
+                    env.SOURCE_IMAGE_DIGEST = (imageMeta.ImageSHA ?: imageMeta.imageDigest ?: '').toString().trim()
+                    env.SOURCE_IMAGE_TAG = (params.SOURCE_IMAGE_TAG ?: imageMeta.ImageTag ?: '').toString().trim()
+                    env.SOURCE_IMAGE_REPO = (imageMeta.ImageRepo ?: "${env.SOURCE_ECR_REGISTRY}.dkr.ecr.${env.AWS_REGION}.amazonaws.com/${env.SOURCE_ECR_REPOSITORY}").toString().trim()
+
+                    if (!env.SOURCE_IMAGE_DIGEST?.startsWith('sha256:')) {
+                        error "image.json must include immutable ImageSHA/imageDigest."
+                    }
+
+                    archiveArtifacts artifacts: 'image.json,templateconfiguration.json', fingerprint: true
+                    echo "Loaded release image digest ${env.SOURCE_IMAGE_DIGEST} for ${params.PROJECT_NAME}."
+                }
+            }
+
+            stage('Validate Artifact Evidence') {
+                withEnv(awsClientEnv(params, 'SOURCE_AWS_ROLE_ARN')) {
+                    sh """
+                      set -e
+                      aws ecr describe-images \
+                        --region ${env.AWS_REGION} \
+                        --registry-id ${env.SOURCE_ECR_REGISTRY} \
+                        --repository-name ${env.SOURCE_ECR_REPOSITORY} \
+                        --image-ids imageDigest=${env.SOURCE_IMAGE_DIGEST} >/dev/null
+
+                      aws s3 ls s3://${env.ARTIFACT_BUCKET}/${env.ARTIFACT_PREFIX}/ --region ${env.AWS_REGION} >/dev/null
+                    """
+                }
+            }
+
+            stage('Create / Update Secrets') {
+                if (!params.SECRET_ENABLED?.toBoolean()) {
+                    echo "Secret management disabled for this production deployment."
+                } else {
+                    def xids = (params.XID_ARRAY ?: '').toString().split(',').collect { it.trim() }.findAll { it }
+                    if (!xids) {
+                        error "SECRET_ENABLED is true, but XID_ARRAY is empty."
+                    }
+                    withEnv(awsClientEnv(params, 'TARGET_AWS_ROLE_ARN')) {
+                        xids.each { xid ->
+                            def secretName = "/horizon/${params.PROJECT_NAME}/${env.TARGET_ENV}/${xid}"
+                            sh """
+                              set +x
+                              aws secretsmanager describe-secret --secret-id '${secretName}' --region ${env.AWS_REGION} >/dev/null 2>&1 \
+                              || aws secretsmanager create-secret \
+                                   --name '${secretName}' \
+                                   --description 'Managed by Horizon Relevance production pipeline for ${params.PROJECT_NAME}' \
+                                   --secret-string '{"managedBy":"horizon-relevance","application":"${params.PROJECT_NAME}","environment":"${env.TARGET_ENV}","xid":"${xid}"}' \
+                                   --region ${env.AWS_REGION} >/dev/null
+                            """
+                        }
+                    }
+                }
+            }
+
+            stage('Promote Image To Production ECR') {
+                withEnv(awsClientEnv(params, 'SOURCE_AWS_ROLE_ARN')) {
+                    sh """
+                      set -e
+                      aws ecr batch-get-image \
+                        --region ${env.AWS_REGION} \
+                        --registry-id ${env.SOURCE_ECR_REGISTRY} \
+                        --repository-name ${env.SOURCE_ECR_REPOSITORY} \
+                        --image-ids imageDigest=${env.SOURCE_IMAGE_DIGEST} \
+                        --query 'images[0].imageManifest' \
+                        --output text > image-manifest.json
+
+                      test -s image-manifest.json
+                    """
+                }
+                withEnv(awsClientEnv(params, 'TARGET_AWS_ROLE_ARN')) {
+                    sh """
+                      set -e
+                      aws ecr describe-repositories \
+                        --region ${env.AWS_REGION} \
+                        --registry-id ${env.TARGET_ECR_REGISTRY} \
+                        --repository-names ${env.TARGET_ECR_REPOSITORY} >/dev/null 2>&1 \
+                      || aws ecr create-repository \
+                        --region ${env.AWS_REGION} \
+                        --repository-name ${env.TARGET_ECR_REPOSITORY} >/dev/null
+
+                      for tag in \$(echo "${env.TARGET_IMAGE_TAG}" | tr ',' ' '); do
+                        clean_tag="\$(echo "\$tag" | sed 's/^ *//;s/ *\$//')"
+                        [ -z "\$clean_tag" ] && continue
+                        aws ecr put-image \
+                          --region ${env.AWS_REGION} \
+                          --registry-id ${env.TARGET_ECR_REGISTRY} \
+                          --repository-name ${env.TARGET_ECR_REPOSITORY} \
+                          --image-tag "\$clean_tag" \
+                          --image-manifest file://image-manifest.json >/dev/null
+                      done
+                    """
+                    env.PROD_IMAGE_URI = "${env.TARGET_ECR_REGISTRY}.dkr.ecr.${env.AWS_REGION}.amazonaws.com/${env.TARGET_ECR_REPOSITORY}@${env.SOURCE_IMAGE_DIGEST}".toLowerCase()
+                }
+            }
+
+            stage('Manual Approval') {
+                def approver = (params.APPROVER ?: params.REQUESTED_BY ?: 'release-approver').toString()
+                timeout(time: 60, unit: 'MINUTES') {
+                    input message: "Approve production deployment for ${params.PROJECT_NAME} to ${env.TARGET_ENV} using ${env.PROD_IMAGE_URI}?", ok: 'Approve'
+                }
+                writeFile file: 'approval.json', text: groovy.json.JsonOutput.prettyPrint(groovy.json.JsonOutput.toJson([
+                    application: params.PROJECT_NAME,
+                    targetEnv: env.TARGET_ENV,
+                    imageUri: env.PROD_IMAGE_URI,
+                    requestedBy: params.REQUESTED_BY ?: 'unknown',
+                    approver: approver,
+                    approvedAt: new Date().format("yyyy-MM-dd'T'HH:mm:ssXXX", TimeZone.getTimeZone('UTC')),
+                    buildUrl: env.BUILD_URL
+                ]))
+                archiveArtifacts artifacts: 'approval.json', fingerprint: true
+            }
+
+            stage("Deploy Approved Image (${env.TARGET_ENV})") {
+                env.IMAGE_URI = env.PROD_IMAGE_URI
+                deployHelm(params + [ENABLE_OPA: true, TARGET_ENV: env.TARGET_ENV])
+            }
+
+            stage('Publish Deployment Evidence') {
+                writeFile file: 'deployment.json', text: groovy.json.JsonOutput.prettyPrint(groovy.json.JsonOutput.toJson([
+                    application: params.PROJECT_NAME,
+                    sourceEnv: params.SOURCE_ENV ?: 'STAGE',
+                    targetEnv: env.TARGET_ENV,
+                    imageUri: env.PROD_IMAGE_URI,
+                    imageDigest: env.SOURCE_IMAGE_DIGEST,
+                    targetTags: env.TARGET_IMAGE_TAG,
+                    jenkinsJob: env.JOB_NAME,
+                    buildNumber: env.BUILD_NUMBER,
+                    buildUrl: env.BUILD_URL,
+                    deployedAt: new Date().format("yyyy-MM-dd'T'HH:mm:ssXXX", TimeZone.getTimeZone('UTC'))
+                ]))
+                archiveArtifacts artifacts: 'deployment.json', fingerprint: true
+                withEnv(awsClientEnv(params, 'TARGET_AWS_ROLE_ARN')) {
+                    sh """
+                      aws s3 cp approval.json s3://${env.ARTIFACT_BUCKET}/${env.ARTIFACT_PREFIX}/prod/approval.json --region ${env.AWS_REGION}
+                      aws s3 cp deployment.json s3://${env.ARTIFACT_BUCKET}/${env.ARTIFACT_PREFIX}/prod/deployment.json --region ${env.AWS_REGION}
+                    """
+                }
+            }
+
+            publishSns(params, 'SUCCESS', "Prod deployment completed for ${params.PROJECT_NAME}. Image: ${env.PROD_IMAGE_URI}")
+        } catch (Exception e) {
+            echo "Prod Devops Pipeline failed: ${e.message}"
+            currentBuild.result = 'FAILURE'
+            publishSns(params, 'FAILED', "Prod deployment failed for ${params.PROJECT_NAME}. Reason: ${e.message}")
+            if (params.NOTIFY_EMAIL) {
+                emailext subject: "[Prod Devops Pipeline][FAILED] ${params.PROJECT_NAME} #${env.BUILD_NUMBER}",
+                         body: """<p>Production deployment failed for <b>${params.PROJECT_NAME}</b>.</p>
+                                  <p>Reason: ${e.message}</p>
+                                  <p>Job: ${env.JOB_NAME} #${env.BUILD_NUMBER}</p>
+                                  <p>Requester: ${params.REQUESTED_BY ?: 'n/a'}</p>""",
+                         to: params.NOTIFY_EMAIL
+            }
+            throw e
+        }
+    }
+}
+
+def awsClientEnv(Map params, String preferredRoleParam = 'CLIENT_AWS_ROLE_ARN') {
+    def roleArn = (params[preferredRoleParam] ?: params.CLIENT_AWS_ROLE_ARN ?: '').toString().trim()
     if (!roleArn) {
         return []
     }

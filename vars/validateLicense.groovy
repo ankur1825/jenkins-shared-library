@@ -46,6 +46,17 @@ def call(Map params = [:]) {
 }
 
 def requestedFeatures(Map params) {
+    if (str(params.PIPELINE_KIND).equalsIgnoreCase('PROD_DEVOPS')) {
+        def prodFeatures = ['artifact_publish', 'prod_deploy']
+        if (asBool(params.SECRET_ENABLED)) {
+            prodFeatures << 'secret_management'
+        }
+        if (asBool(params.ENABLE_NOTIFICATIONS)) {
+            prodFeatures << 'notifications'
+        }
+        return prodFeatures.unique()
+    }
+
     def features = ['build', 'artifact_publish']
     if (asBool(params.ENABLE_SONARQUBE)) {
         features << 'code_scan'

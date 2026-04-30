@@ -14,12 +14,14 @@ def call(Map params = [:]) {
     def enableTrivy     = asBool(params.ENABLE_TRIVY)
 
     // Router for DevOps pipeline
-    def pipelineKind = str(params.PIPELINE_KIND)             // expect "DEVOPS"
+    def pipelineKind = str(params.PIPELINE_KIND)
     def serviceName  = str(params.SERVICE_NAME)
     def isDevops     = pipelineKind.equalsIgnoreCase('DEVOPS') ||
                        serviceName.toLowerCase().contains('devops pipeline')
+    def isProdDevops = pipelineKind.equalsIgnoreCase('PROD_DEVOPS') ||
+                       serviceName.toLowerCase().contains('prod devops pipeline')
 
-    if (!repoUrl) {
+    if (!isProdDevops && !repoUrl) {
         error "Repository URL is missing. Please provide a valid URL."
     }
 
@@ -35,6 +37,7 @@ def call(Map params = [:]) {
                                     k.toString().toUpperCase().contains('SIGNATURE')
                     echo "${k} = ${sensitive ? '****' : v}"
                 }
+                echo "Router says isProdDevops = ${isProdDevops}"
                 echo "Router says isDevops = ${isDevops}"
                 echo "============================="
             }
@@ -51,7 +54,9 @@ def call(Map params = [:]) {
             writeFile file: tmpPath, text: libraryResource('jenkins_template/AppPipeline.groovy')
             def pipelineScript = load tmpPath
 
-            if (isDevops) {
+            if (isProdDevops) {
+                pipelineScript.runProdDevops(params)
+            } else if (isDevops) {
                 pipelineScript.runDevops(params)
             } else {
                 pipelineScript.run(params)
