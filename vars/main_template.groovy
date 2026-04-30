@@ -1,103 +1,66 @@
-def call(Map params) {
-    def credentialsId = params.CREDENTIALS_ID
-    def appType = params.APP_TYPE
-    def repoUrl = params.REPO_URL
-    def branch = params.BRANCH
-    def enableSonarQube = params.ENABLE_SONARQUBE.toBoolean() ?: false
-    def enableOpa = params.ENABLE_OPA.toBoolean() ?: false
-    def enableTrivy = params.ENABLE_TRIVY.toBoolean() ?: false
+// vars/main_template.groovy
+def call(Map params = [:]) {
+    // ---- Normalize & read params (works for String "true"/"false" too)
+    def str      = { it -> (it ?: '').toString().trim() }
+    def asBool   = { it -> it instanceof Boolean ? it : str(it).equalsIgnoreCase('true') }
 
-    if (!repoUrl?.trim()) {
+    def credentialsId   = str(params.CREDENTIALS_ID)
+    def appType         = str(params.APP_TYPE)
+    def repoUrl         = str(params.REPO_URL)
+    def branch          = str(params.BRANCH ?: 'main')
+
+    def enableSonarQube = asBool(params.ENABLE_SONARQUBE)
+    def enableOpa       = asBool(params.ENABLE_OPA)
+    def enableTrivy     = asBool(params.ENABLE_TRIVY)
+
+    // Router for DevOps pipeline
+    def pipelineKind = str(params.PIPELINE_KIND)
+    def serviceName  = str(params.SERVICE_NAME)
+    def isDevops     = pipelineKind.equalsIgnoreCase('DEVOPS') ||
+                       serviceName.toLowerCase().contains('devops pipeline')
+    def isProdDevops = pipelineKind.equalsIgnoreCase('PROD_DEVOPS') ||
+                       serviceName.toLowerCase().contains('prod devops pipeline')
+
+    if (!isProdDevops && !repoUrl) {
         error "Repository URL is missing. Please provide a valid URL."
     }
 
     node {
-        stage('Clone shared library') {
-            git credentialsId: credentialsId, url: 'https://github.com/ankur1825/jenkins-shared-library.git', branch: 'main'
-        }
-
         stage('Print Incoming Parameters') {
             script {
                 echo "==== Incoming Parameters ===="
-                echo "APP_TYPE = ${appType}"
-                echo "REPO_URL = ${repoUrl}"
-                echo "BRANCH = ${branch}"
-                echo "ENABLE_SONARQUBE = ${enableSonarQube}"
-                echo "ENABLE_OPA = ${enableOpa}"
-                echo "ENABLE_TRIVY = ${enableTrivy}"
-                echo "=============================="
+                params.each { k, v ->
+                    def sensitive = k.toString().toUpperCase().contains('TOKEN') ||
+                                    k.toString().toUpperCase().contains('PASSWORD') ||
+                                    k.toString().toUpperCase().contains('SECRET') ||
+                                    k.toString().toUpperCase().contains('LICENSE_KEY') ||
+                                    k.toString().toUpperCase().contains('SIGNATURE')
+                    echo "${k} = ${sensitive ? '****' : v}"
+                }
+                echo "Router says isProdDevops = ${isProdDevops}"
+                echo "Router says isDevops = ${isDevops}"
+                echo "============================="
             }
         }
 
-        stage('Check Directory') {
+        stage('Check Workspace') {
             sh 'pwd'
-            sh 'ls -lrth'
+            sh 'ls -lrth || true'
         }
 
-        stage('Load and Run Application Pipeline') {
-            def pipelineScript = load 'jenkins_template/AppPipeline.groovy'
-            pipelineScript.run(params)  // still pass params here for compatibility
+        stage('Load and Run Pipeline') {
+            // IMPORTANT: load from the shared library version (the one from @Library), not from workspace
+            def tmpPath = '.loaded_AppPipeline.groovy'
+            writeFile file: tmpPath, text: libraryResource('jenkins_template/AppPipeline.groovy')
+            def pipelineScript = load tmpPath
+
+            if (isProdDevops) {
+                pipelineScript.runProdDevops(params)
+            } else if (isDevops) {
+                pipelineScript.runDevops(params)
+            } else {
+                pipelineScript.run(params)
+            }
         }
     }
 }
-
-
-
-
-
-// def call(Map params) {
-//     def credentialsId = params.CREDENTIALS_ID
-//     def appType = params.APP_TYPE
-//     def repoUrl = params.REPO_URL
-//     def branch = params.BRANCH
-//     def enableSonarQube = params.ENABLE_SONARQUBE.toBoolean() ?: false
-//     def enableOpa = params.ENABLE_OPA.toBoolean() ?: false
-//     def enableTrivy = params.ENABLE_TRIVY.toBoolean() ?: false
-//     if (!repoUrl) {
-//         error "Repository URL is missing. Please provide a valid URL."
-//     }
-
-//     node {
-
-//         stage('Clone shared library'){
-//             git credentialsId: credentialsId, url: 'https://github.com/ankur1825/jenkins-shared-library.git', branch: 'main'
-//         }
-
-//         stage('Print Incoming Parameters') {
-//             script {
-//                 echo "==== Incoming Parameters ===="
-//                 params.each { key, value ->
-//                     echo "${key} = ${value}"
-//                 }
-//                 echo "=============================="
-//             }
-//         }
-
-//         // Stage to check dir and content
-//         stage('check current dir') {
-//             sh 'pwd'
-//             sh 'ls -lrth '
-//         }
-
-//         // Load and run the appropriate app-specific pipeline
-//         stage('Load and Run Application Pipeline') {
-//             script {
-
-//                 // @Library('jenkins-shared-library@main') _
-//                 def pipelineScript = null
-
-//                 if (appType == 'java') {
-//                     pipelineScript = load 'jenkins_template/AppPipeline.groovy'
-//                 } else if (appType == 'python') {
-//                     pipelineScript = load 'jenkins_template/AppPipeline.groovy'
-//                 } else if (appType == 'npm') {
-//                     pipelineScript = load 'jenkins_template/AppPipeline.groovy'
-//                 } else {
-//                     error "Unsupported application type: ${appType}. Please choose 'java', 'python', or 'npm'."
-//                 }
-
-//                 pipelineScript.run(params)
-//             }
-//         }
-//     }
-// }        
