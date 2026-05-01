@@ -1,0 +1,94 @@
+namespaceOverride: horizon-relevance-dev
+replicaCount: 1
+
+image:
+  repository: sonarqube
+  tag: "10.4-community"
+  pullPolicy: IfNotPresent
+
+service:
+  type: ClusterIP
+  port: 9000
+
+sonarqube:
+  webContext: /sonarqube
+  bootstrapChecksDisable: true
+  sonarPropertiesSecretName: sonarqube-config
+  adminGroup: admins
+  sonarUsersGroup: developers
+
+ldap:
+  enabled: true
+  url: ldap://openldap.horizon-relevance-dev.svc.cluster.local:389
+  bindDn: cn=admin,dc=horizonrelevance,dc=local
+  bindPassword: ""
+  existingSecret: jenkins-ldap
+  existingSecretKey: password
+  userBaseDn: ou=users,dc=horizonrelevance,dc=local
+  userRequest: "(&(objectClass=inetOrgPerson)(uid={login}))"
+  realNameAttribute: cn
+  emailAttribute: mail
+  groupBaseDn: ou=groups,dc=horizonrelevance,dc=local
+  groupRequest: "(&(objectClass=groupOfNames)(member={dn}))"
+  groupIdAttribute: cn
+
+jdbc:
+  enabled: false
+  url: ""
+  username: ""
+  password: ""
+  existingSecret: ""
+  usernameKey: username
+  passwordKey: password
+
+persistence:
+  enabled: true
+  storageClass: gp3
+  accessMode: ReadWriteOnce
+  dataSize: 10Gi
+  extensionsSize: 2Gi
+  logsSize: 2Gi
+
+ingress:
+  enabled: true
+  className: nginx
+  host: horizonrelevance.com
+  path: /sonarqube(/|$)(.*)
+  pathType: ImplementationSpecific
+  tls:
+    enabled: true
+    secretName: sonarqube-tls
+  annotations:
+    nginx.ingress.kubernetes.io/rewrite-target: /sonarqube/$2
+    nginx.ingress.kubernetes.io/ssl-redirect: "true"
+    cert-manager.io/cluster-issuer: letsencrypt-prod
+
+resources:
+  requests:
+    cpu: 500m
+    memory: 2Gi
+  limits:
+    cpu: "2"
+    memory: 4Gi
+
+securityContext:
+  fsGroup: 1000
+
+containerSecurityContext: {}
+
+probes:
+  startup:
+    initialDelaySeconds: 90
+    periodSeconds: 10
+    failureThreshold: 60
+    timeoutSeconds: 5
+  readiness:
+    initialDelaySeconds: 30
+    periodSeconds: 10
+    failureThreshold: 12
+    timeoutSeconds: 5
+  liveness:
+    initialDelaySeconds: 180
+    periodSeconds: 20
+    failureThreshold: 10
+    timeoutSeconds: 5

@@ -46,8 +46,6 @@ def run(Map params) {
 
             if (params.ENABLE_SONARQUBE?.toBoolean()) {
                 stage('Code Quality Analysis') {
-                    def scannerHome = tool 'SONAR-SCANNER'
-
                     if (!fileExists('sonar-project.properties')) {
                         error "sonar-project.properties not found!"
                     }
@@ -62,28 +60,14 @@ def run(Map params) {
                     }
                     echo "Code analysis project key: ${sonarProjectKey}"
 
-                    withSonarQubeEnv('sonarqube') {
-                        withCredentials([string(credentialsId: 'sonarqube-token', variable: 'SONAR_TOKEN')]) {
-                            sh """
-                                ${scannerHome}/bin/sonar-scanner \
-                                -Dproject.settings=sonar-project.properties \
-                                -Dsonar.host.url=https://horizonrelevance.com/sonarqube
-                            """
-                        }
-                    }
-
-                    timeout(time: 10, unit: 'MINUTES') {
-                        waitForQualityGate abortPipeline: false
-                    }
+                    runSonarAnalysisAndGate(sonarProjectKey)
 
                     wrap([$class: 'BuildUser']) {
                         def triggeredBy = env.BUILD_USER ?: "unknown"
                         echo "Build triggered by: ${triggeredBy}"
 
                         script {
-                            withCredentials([string(credentialsId: 'sonarqube-token', variable: 'SONAR_TOKEN')]) {
-                                postProcessSonar(sonarProjectKey, params.REPO_URL, triggeredBy)
-                            }
+                            postProcessSonar(sonarProjectKey, params.REPO_URL, triggeredBy)
                         }
                     }
                 }
@@ -647,7 +631,6 @@ def publishSns(Map params, String status, String message) {
 }
 
 def runSonarQubeAnalysis(Map params) {
-    def scannerHome = tool 'SONAR-SCANNER'
     if (!fileExists('sonar-project.properties')) {
         error "sonar-project.properties not found!"
     }
@@ -660,16 +643,7 @@ def runSonarQubeAnalysis(Map params) {
     }
     echo "Code analysis project key: ${sonarProjectKey}"
 
-    withSonarQubeEnv('sonarqube') {
-        withCredentials([string(credentialsId: 'sonarqube-token', variable: 'SONAR_TOKEN')]) {
-            sh """
-                ${scannerHome}/bin/sonar-scanner \
-                -Dproject.settings=sonar-project.properties \
-                -Dsonar.host.url=https://horizonrelevance.com/sonarqube
-            """
-        }
-    }
-    timeout(time: 10, unit: 'MINUTES') { waitForQualityGate abortPipeline: false }
+    runSonarAnalysisAndGate(sonarProjectKey)
     postProcessSonar(sonarProjectKey, params.REPO_URL, params.REQUESTED_BY ?: 'unknown')
 }
 
@@ -916,6 +890,100 @@ def publishQualityResults(String tool, String reportDir, Map params) {
         sh """
           aws s3 sync '${reportDir}' 's3://${env.ARTIFACT_BUCKET}/${pipelinePrefix}/${params.PROJECT_NAME}/${imageTag}/test-results/${tool.toLowerCase()}/' --region ${env.AWS_REGION}
         """
+    }
+}
+
+def sonarHostUrl() {
+    return (env.SONAR_HOST_URL ?: 'http://sonarqube.horizon-relevance-dev.svc.cluster.local:9000/sonarqube').trim()
+}
+
+def runSonarAnalysisAndGate(String projectKey) {
+    def hostUrl = sonarHostUrl()
+    withEnv(["SONAR_HOST_URL=${hostUrl}", "SONAR_PROJECT_KEY=${projectKey}"]) {
+        sh '''
+          set +x
+          SCANNER="$(command -v sonar-scanner || true)"
+          if [ -z "$SCANNER" ] && [ -x /opt/sonar-scanner/bin/sonar-scanner ]; then
+            SCANNER=/opt/sonar-scanner/bin/sonar-scanner
+          fi
+          if [ -z "$SCANNER" ] && [ -x /var/jenkins_home/tools/sonar-scanner/bin/sonar-scanner ]; then
+            SCANNER=/var/jenkins_home/tools/sonar-scanner/bin/sonar-scanner
+          fi
+          if [ -z "$SCANNER" ]; then
+            echo "sonar-scanner CLI is not available in the Jenkins agent image."
+            exit 1
+          fi
+
+          TOKEN_ARG=""
+          if [ -n "${SONAR_TOKEN:-}" ]; then
+            TOKEN_ARG="-Dsonar.token=${SONAR_TOKEN}"
+          fi
+
+          "$SCANNER" \
+            -Dproject.settings=sonar-project.properties \
+            -Dsonar.host.url="$SONAR_HOST_URL" \
+            $TOKEN_ARG
+        '''
+
+        timeout(time: 10, unit: 'MINUTES') {
+            sh '''
+              set +x
+              if [ ! -f .scannerwork/report-task.txt ]; then
+                echo "Sonar scanner report-task.txt was not created."
+                exit 1
+              fi
+
+              CE_TASK_ID="$(awk -F= '/^ceTaskId=/{print $2}' .scannerwork/report-task.txt)"
+              if [ -z "$CE_TASK_ID" ]; then
+                echo "Sonar Compute Engine task id is missing."
+                exit 1
+              fi
+
+              AUTH_ARGS=""
+              if [ -n "${SONAR_TOKEN:-}" ]; then
+                AUTH_ARGS="-u ${SONAR_TOKEN}:"
+              fi
+
+              for i in $(seq 1 60); do
+                curl -fsS $AUTH_ARGS "$SONAR_HOST_URL/api/ce/task?id=$CE_TASK_ID" -o sonar-ce-task.json
+                STATUS="$(python3 - <<'PY'
+import json
+print(json.load(open('sonar-ce-task.json')).get('task', {}).get('status', ''))
+PY
+)"
+                if [ "$STATUS" = "SUCCESS" ]; then
+                  python3 - <<'PY' > sonar-analysis-id.txt
+import json
+print(json.load(open('sonar-ce-task.json')).get('task', {}).get('analysisId', ''))
+PY
+                  break
+                fi
+                if [ "$STATUS" = "FAILED" ] || [ "$STATUS" = "CANCELED" ]; then
+                  echo "Sonar Compute Engine task ended with status: $STATUS"
+                  exit 1
+                fi
+                sleep 10
+              done
+
+              ANALYSIS_ID="$(cat sonar-analysis-id.txt 2>/dev/null || true)"
+              if [ -z "$ANALYSIS_ID" ]; then
+                echo "Timed out waiting for Sonar analysis completion."
+                exit 1
+              fi
+
+              curl -fsS $AUTH_ARGS "$SONAR_HOST_URL/api/qualitygates/project_status?analysisId=$ANALYSIS_ID" -o sonar-quality-gate.json
+              QG_STATUS="$(python3 - <<'PY'
+import json
+print(json.load(open('sonar-quality-gate.json')).get('projectStatus', {}).get('status', 'UNKNOWN'))
+PY
+)"
+              echo "Sonar quality gate status: $QG_STATUS"
+              if [ "$QG_STATUS" = "ERROR" ]; then
+                echo "Sonar quality gate failed."
+                exit 1
+              fi
+            '''
+        }
     }
 }
 

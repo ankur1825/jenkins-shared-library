@@ -1,0 +1,80 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ include "sonarqube.fullname" . }}
+  namespace: {{ .Values.namespaceOverride }}
+  labels:
+    {{- include "sonarqube.labels" . | nindent 4 }}
+spec:
+  replicas: {{ .Values.replicaCount }}
+  selector:
+    matchLabels:
+      {{- include "sonarqube.selectorLabels" . | nindent 6 }}
+  template:
+    metadata:
+      labels:
+        {{- include "sonarqube.selectorLabels" . | nindent 8 }}
+    spec:
+      securityContext:
+        {{- toYaml .Values.securityContext | nindent 8 }}
+      containers:
+        - name: sonarqube
+          image: "{{ .Values.image.repository }}:{{ .Values.image.tag }}"
+          imagePullPolicy: {{ .Values.image.pullPolicy }}
+          {{- if .Values.containerSecurityContext }}
+          securityContext:
+            {{- toYaml .Values.containerSecurityContext | nindent 12 }}
+          {{- end }}
+          ports:
+            - name: http
+              containerPort: 9000
+          env:
+            - name: SONAR_WEB_CONTEXT
+              value: {{ .Values.sonarqube.webContext | quote }}
+            - name: SONAR_ES_BOOTSTRAP_CHECKS_DISABLE
+              value: {{ .Values.sonarqube.bootstrapChecksDisable | quote }}
+          resources:
+            {{- toYaml .Values.resources | nindent 12 }}
+          startupProbe:
+            httpGet:
+              path: {{ .Values.sonarqube.webContext }}/api/system/status
+              port: http
+            {{- toYaml .Values.probes.startup | nindent 12 }}
+          readinessProbe:
+            httpGet:
+              path: {{ .Values.sonarqube.webContext }}/api/system/status
+              port: http
+            {{- toYaml .Values.probes.readiness | nindent 12 }}
+          livenessProbe:
+            httpGet:
+              path: {{ .Values.sonarqube.webContext }}/api/system/status
+              port: http
+            {{- toYaml .Values.probes.liveness | nindent 12 }}
+          volumeMounts:
+            - name: sonar-config
+              mountPath: /opt/sonarqube/conf/sonar.properties
+              subPath: sonar.properties
+              readOnly: true
+            {{- if .Values.persistence.enabled }}
+            - name: data
+              mountPath: /opt/sonarqube/data
+            - name: extensions
+              mountPath: /opt/sonarqube/extensions
+            - name: logs
+              mountPath: /opt/sonarqube/logs
+            {{- end }}
+      volumes:
+        - name: sonar-config
+          secret:
+            secretName: {{ .Values.sonarqube.sonarPropertiesSecretName }}
+        {{- if .Values.persistence.enabled }}
+        - name: data
+          persistentVolumeClaim:
+            claimName: {{ include "sonarqube.fullname" . }}-data
+        - name: extensions
+          persistentVolumeClaim:
+            claimName: {{ include "sonarqube.fullname" . }}-extensions
+        - name: logs
+          persistentVolumeClaim:
+            claimName: {{ include "sonarqube.fullname" . }}-logs
+        {{- end }}
