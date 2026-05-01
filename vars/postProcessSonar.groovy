@@ -7,23 +7,27 @@ def call(String projectKey, String repoUrl, String triggeredBy) {
 
     writeFile file: 'scripts/process_sonar_ml.py', text: libraryResource('sonar/process_sonar_ml.py')
 
-    withCredentials([usernamePassword(credentialsId: 'sonar_secret', usernameVariable: 'SONAR_USER', passwordVariable: 'SONAR_PASS')]) {
-        withEnv(["PROJECT_KEY=${projectKey}"]) {
-            sh '''
-                echo "Downloading code analysis issues for project: $PROJECT_KEY"
-                curl -fsS -u "$SONAR_USER:$SONAR_PASS" \
-	                 "https://horizonrelevance.com/sonarqube/api/issues/search?componentKeys=$PROJECT_KEY&statuses=OPEN,CONFIRMED,REOPENED&types=VULNERABILITY,BUG,CODE_SMELL&ps=500" \
-	                 -o issues.json
+    def sonarHostUrl = (env.SONAR_HOST_URL ?: 'http://sonarqube.horizon-relevance-dev.svc.cluster.local:9000/sonarqube').trim()
+    withEnv(["PROJECT_KEY=${projectKey}", "SONAR_HOST_URL=${sonarHostUrl}"]) {
+        sh '''
+            set +x
+            echo "Downloading code analysis issues for project: $PROJECT_KEY"
+            AUTH_ARGS=""
+            if [ -n "${SONAR_TOKEN:-}" ]; then
+                AUTH_ARGS="-u ${SONAR_TOKEN}:"
+            fi
+            curl -fsS $AUTH_ARGS \
+                 "$SONAR_HOST_URL/api/issues/search?componentKeys=$PROJECT_KEY&statuses=OPEN,CONFIRMED,REOPENED&types=VULNERABILITY,BUG,CODE_SMELL&ps=500" \
+                 -o issues.json
 
-                if [ ! -s issues.json ]; then
-                    echo "[INFO] No issues found. Creating empty output file."
-                    echo "[]" > ai_sonar_results.json
-                    echo "NO_ISSUES=true" > sonar_flag.txt
-                else
-                    echo "NO_ISSUES=false" > sonar_flag.txt
-                fi
-            '''
-        }
+            if [ ! -s issues.json ]; then
+                echo "[INFO] No issues found. Creating empty output file."
+                echo "[]" > ai_sonar_results.json
+                echo "NO_ISSUES=true" > sonar_flag.txt
+            else
+                echo "NO_ISSUES=false" > sonar_flag.txt
+            fi
+        '''
     }
 
     def noIssues = readFile('sonar_flag.txt').contains("NO_ISSUES=true")

@@ -46,8 +46,6 @@ def run(Map params) {
 
             if (params.ENABLE_SONARQUBE?.toBoolean()) {
                 stage('Code Quality Analysis') {
-                    def scannerHome = tool 'SONAR-SCANNER'
-
                     if (!fileExists('sonar-project.properties')) {
                         error "sonar-project.properties not found!"
                     }
@@ -62,28 +60,14 @@ def run(Map params) {
                     }
                     echo "Code analysis project key: ${sonarProjectKey}"
 
-                    withSonarQubeEnv('sonarqube') {
-                        withCredentials([string(credentialsId: 'sonarqube-token', variable: 'SONAR_TOKEN')]) {
-                            sh """
-                                ${scannerHome}/bin/sonar-scanner \
-                                -Dproject.settings=sonar-project.properties \
-                                -Dsonar.host.url=https://horizonrelevance.com/sonarqube
-                            """
-                        }
-                    }
-
-                    timeout(time: 10, unit: 'MINUTES') {
-                        waitForQualityGate abortPipeline: false
-                    }
+                    runSonarAnalysisAndGate(sonarProjectKey)
 
                     wrap([$class: 'BuildUser']) {
                         def triggeredBy = env.BUILD_USER ?: "unknown"
                         echo "Build triggered by: ${triggeredBy}"
 
                         script {
-                            withCredentials([string(credentialsId: 'sonarqube-token', variable: 'SONAR_TOKEN')]) {
-                                postProcessSonar(sonarProjectKey, params.REPO_URL, triggeredBy)
-                            }
+                            postProcessSonar(sonarProjectKey, params.REPO_URL, triggeredBy)
                         }
                     }
                 }
@@ -198,7 +182,6 @@ def runDevops(Map params) {
             // -------- QUALITY GATES --------
             if (params.ENABLE_SONARQUBE?.toBoolean()) {
                 stage('Code Quality Analysis') {
-                    def scannerHome = tool 'SONAR-SCANNER'
                     if (!fileExists('sonar-project.properties')) {
                         error "sonar-project.properties not found!"
                     }
@@ -211,16 +194,7 @@ def runDevops(Map params) {
                     }
                     echo "Code analysis project key: ${sonarProjectKey}"
 
-                    withSonarQubeEnv('sonarqube') {
-                        withCredentials([string(credentialsId: 'sonarqube-token', variable: 'SONAR_TOKEN')]) {
-                            sh """
-                                ${scannerHome}/bin/sonar-scanner \
-                                -Dproject.settings=sonar-project.properties \
-                                -Dsonar.host.url=https://horizonrelevance.com/sonarqube
-                            """
-                        }
-                    }
-                    timeout(time: 10, unit: 'MINUTES') { waitForQualityGate abortPipeline: false }
+                    runSonarAnalysisAndGate(sonarProjectKey)
                     postProcessSonar(sonarProjectKey, params.REPO_URL, params.REQUESTED_BY ?: 'unknown')
                 }
             }
@@ -309,7 +283,7 @@ def runDevops(Map params) {
 
             // -------- Deploy --------
             stage("Deploy (${params.TARGET_ENV})") {
-                deployHelm(ENABLE_OPA: params.ENABLE_OPA, TARGET_ENV: params.TARGET_ENV ?: 'EKS-NONPROD')
+                deployHelm(params + [ENABLE_OPA: params.ENABLE_OPA, TARGET_ENV: params.TARGET_ENV ?: 'EKS-NONPROD'])
             }
 
         } catch (Exception e) {
@@ -329,8 +303,213 @@ def runDevops(Map params) {
     }
 }
 
-def awsClientEnv(Map params) {
-    def roleArn = (params.CLIENT_AWS_ROLE_ARN ?: '').toString().trim()
+// ================== PROD DEVOPS PIPELINE ==================
+def runProdDevops(Map params) {
+    /*
+      Production promotion pipeline:
+      - does not checkout source
+      - does not build image
+      - reads image.json/templateconfiguration.json from client S3
+      - promotes immutable image digest to production tag/repository
+      - requires approval before deployment
+    */
+    node {
+        try {
+            stage('Validate License') {
+                validateLicense(params + [PIPELINE_NAME: 'Prod Devops Pipeline'])
+            }
+
+            stage('Load Release Metadata') {
+                script {
+                    env.AWS_REGION = (params.AWS_REGION ?: 'us-east-1').toString().trim()
+                    env.ARTIFACT_BUCKET = (params.ARTIFACT_BUCKET ?: '').toString().trim()
+                    env.ARTIFACT_PREFIX = (params.ARTIFACT_PREFIX ?: '').toString().trim().replaceAll('^/|/$', '')
+                    env.IMAGE_JSON_PATH = (params.IMAGE_JSON_PATH ?: "${env.ARTIFACT_PREFIX}/image.json").toString().trim().replaceAll('^/', '')
+                    env.TEMPLATE_CONFIG_PATH = (params.TEMPLATE_CONFIG_PATH ?: "${env.ARTIFACT_PREFIX}/templateconfiguration.json").toString().trim().replaceAll('^/', '')
+                    env.SOURCE_ECR_REGISTRY = (params.SOURCE_ECR_REGISTRY ?: '').toString().trim()
+                    env.SOURCE_ECR_REPOSITORY = (params.SOURCE_ECR_REPOSITORY ?: params.PROJECT_NAME ?: '').toString().trim()
+                    env.TARGET_ECR_REGISTRY = (params.TARGET_ECR_REGISTRY ?: '').toString().trim()
+                    env.TARGET_ECR_REPOSITORY = (params.TARGET_ECR_REPOSITORY ?: params.PROJECT_NAME ?: '').toString().trim()
+                    env.TARGET_IMAGE_TAG = (params.TARGET_IMAGE_TAG ?: 'prod').toString().trim()
+                    env.TARGET_ENV = (params.TARGET_ENV ?: 'EKS-PROD').toString().trim()
+                    env.APP_NAME = env.TARGET_ECR_REPOSITORY
+
+                    if (!env.ARTIFACT_BUCKET || !env.IMAGE_JSON_PATH || !env.SOURCE_ECR_REGISTRY || !env.SOURCE_ECR_REPOSITORY || !env.TARGET_ECR_REGISTRY || !env.TARGET_ECR_REPOSITORY) {
+                        error "Missing production promotion inputs. Need artifact bucket/path and source/target ECR settings."
+                    }
+                    if (!env.TARGET_ENV.toUpperCase().contains('PROD')) {
+                        error "Prod Devops Pipeline only supports production target environments."
+                    }
+
+                    withEnv(awsClientEnv(params, 'SOURCE_AWS_ROLE_ARN')) {
+                        sh """
+                          set -e
+                          aws s3 cp s3://${env.ARTIFACT_BUCKET}/${env.IMAGE_JSON_PATH} image.json --region ${env.AWS_REGION}
+                          aws s3 cp s3://${env.ARTIFACT_BUCKET}/${env.TEMPLATE_CONFIG_PATH} templateconfiguration.json --region ${env.AWS_REGION}
+                          test -s image.json
+                          test -s templateconfiguration.json
+                        """
+                    }
+
+                    def imageMeta = readJSON file: 'image.json'
+                    env.SOURCE_IMAGE_DIGEST = (imageMeta.ImageSHA ?: imageMeta.imageDigest ?: '').toString().trim()
+                    env.SOURCE_IMAGE_TAG = (params.SOURCE_IMAGE_TAG ?: imageMeta.ImageTag ?: '').toString().trim()
+                    env.SOURCE_IMAGE_REPO = (imageMeta.ImageRepo ?: "${env.SOURCE_ECR_REGISTRY}.dkr.ecr.${env.AWS_REGION}.amazonaws.com/${env.SOURCE_ECR_REPOSITORY}").toString().trim()
+
+                    if (!env.SOURCE_IMAGE_DIGEST?.startsWith('sha256:')) {
+                        error "image.json must include immutable ImageSHA/imageDigest."
+                    }
+
+                    archiveArtifacts artifacts: 'image.json,templateconfiguration.json', fingerprint: true
+                    echo "Loaded release image digest ${env.SOURCE_IMAGE_DIGEST} for ${params.PROJECT_NAME}."
+                }
+            }
+
+            stage('Validate Artifact Evidence') {
+                withEnv(awsClientEnv(params, 'SOURCE_AWS_ROLE_ARN')) {
+                    sh """
+                      set -e
+                      aws ecr describe-images \
+                        --region ${env.AWS_REGION} \
+                        --registry-id ${env.SOURCE_ECR_REGISTRY} \
+                        --repository-name ${env.SOURCE_ECR_REPOSITORY} \
+                        --image-ids imageDigest=${env.SOURCE_IMAGE_DIGEST} >/dev/null
+
+                      aws s3 ls s3://${env.ARTIFACT_BUCKET}/${env.ARTIFACT_PREFIX}/ --region ${env.AWS_REGION} >/dev/null
+                    """
+                }
+            }
+
+            stage('Create / Update Secrets') {
+                if (!params.SECRET_ENABLED?.toBoolean()) {
+                    echo "Secret management disabled for this production deployment."
+                } else {
+                    def xids = (params.XID_ARRAY ?: '').toString().split(',').collect { it.trim() }.findAll { it }
+                    if (!xids) {
+                        error "SECRET_ENABLED is true, but XID_ARRAY is empty."
+                    }
+                    withEnv(awsClientEnv(params, 'TARGET_AWS_ROLE_ARN')) {
+                        xids.each { xid ->
+                            def secretName = "/horizon/${params.PROJECT_NAME}/${env.TARGET_ENV}/${xid}"
+                            sh """
+                              set +x
+                              aws secretsmanager describe-secret --secret-id '${secretName}' --region ${env.AWS_REGION} >/dev/null 2>&1 \
+                              || aws secretsmanager create-secret \
+                                   --name '${secretName}' \
+                                   --description 'Managed by Horizon Relevance production pipeline for ${params.PROJECT_NAME}' \
+                                   --secret-string '{"managedBy":"horizon-relevance","application":"${params.PROJECT_NAME}","environment":"${env.TARGET_ENV}","xid":"${xid}"}' \
+                                   --region ${env.AWS_REGION} >/dev/null
+                            """
+                        }
+                    }
+                }
+            }
+
+            stage('Promote Image To Production ECR') {
+                withEnv(awsClientEnv(params, 'SOURCE_AWS_ROLE_ARN')) {
+                    sh """
+                      set -e
+                      aws ecr batch-get-image \
+                        --region ${env.AWS_REGION} \
+                        --registry-id ${env.SOURCE_ECR_REGISTRY} \
+                        --repository-name ${env.SOURCE_ECR_REPOSITORY} \
+                        --image-ids imageDigest=${env.SOURCE_IMAGE_DIGEST} \
+                        --query 'images[0].imageManifest' \
+                        --output text > image-manifest.json
+
+                      test -s image-manifest.json
+                    """
+                }
+                withEnv(awsClientEnv(params, 'TARGET_AWS_ROLE_ARN')) {
+                    sh """
+                      set -e
+                      aws ecr describe-repositories \
+                        --region ${env.AWS_REGION} \
+                        --registry-id ${env.TARGET_ECR_REGISTRY} \
+                        --repository-names ${env.TARGET_ECR_REPOSITORY} >/dev/null 2>&1 \
+                      || aws ecr create-repository \
+                        --region ${env.AWS_REGION} \
+                        --repository-name ${env.TARGET_ECR_REPOSITORY} >/dev/null
+
+                      for tag in \$(echo "${env.TARGET_IMAGE_TAG}" | tr ',' ' '); do
+                        clean_tag="\$(echo "\$tag" | sed 's/^ *//;s/ *\$//')"
+                        [ -z "\$clean_tag" ] && continue
+                        aws ecr put-image \
+                          --region ${env.AWS_REGION} \
+                          --registry-id ${env.TARGET_ECR_REGISTRY} \
+                          --repository-name ${env.TARGET_ECR_REPOSITORY} \
+                          --image-tag "\$clean_tag" \
+                          --image-manifest file://image-manifest.json >/dev/null
+                      done
+                    """
+                    env.PROD_IMAGE_URI = "${env.TARGET_ECR_REGISTRY}.dkr.ecr.${env.AWS_REGION}.amazonaws.com/${env.TARGET_ECR_REPOSITORY}@${env.SOURCE_IMAGE_DIGEST}".toLowerCase()
+                }
+            }
+
+            stage('Manual Approval') {
+                def approver = (params.APPROVER ?: params.REQUESTED_BY ?: 'release-approver').toString()
+                timeout(time: 60, unit: 'MINUTES') {
+                    input message: "Approve production deployment for ${params.PROJECT_NAME} to ${env.TARGET_ENV} using ${env.PROD_IMAGE_URI}?", ok: 'Approve'
+                }
+                writeFile file: 'approval.json', text: groovy.json.JsonOutput.prettyPrint(groovy.json.JsonOutput.toJson([
+                    application: params.PROJECT_NAME,
+                    targetEnv: env.TARGET_ENV,
+                    imageUri: env.PROD_IMAGE_URI,
+                    requestedBy: params.REQUESTED_BY ?: 'unknown',
+                    approver: approver,
+                    approvedAt: new Date().format("yyyy-MM-dd'T'HH:mm:ssXXX", TimeZone.getTimeZone('UTC')),
+                    buildUrl: env.BUILD_URL
+                ]))
+                archiveArtifacts artifacts: 'approval.json', fingerprint: true
+            }
+
+            stage("Deploy Approved Image (${env.TARGET_ENV})") {
+                env.IMAGE_URI = env.PROD_IMAGE_URI
+                deployHelm(params + [ENABLE_OPA: true, TARGET_ENV: env.TARGET_ENV])
+            }
+
+            stage('Publish Deployment Evidence') {
+                writeFile file: 'deployment.json', text: groovy.json.JsonOutput.prettyPrint(groovy.json.JsonOutput.toJson([
+                    application: params.PROJECT_NAME,
+                    sourceEnv: params.SOURCE_ENV ?: 'STAGE',
+                    targetEnv: env.TARGET_ENV,
+                    imageUri: env.PROD_IMAGE_URI,
+                    imageDigest: env.SOURCE_IMAGE_DIGEST,
+                    targetTags: env.TARGET_IMAGE_TAG,
+                    jenkinsJob: env.JOB_NAME,
+                    buildNumber: env.BUILD_NUMBER,
+                    buildUrl: env.BUILD_URL,
+                    deployedAt: new Date().format("yyyy-MM-dd'T'HH:mm:ssXXX", TimeZone.getTimeZone('UTC'))
+                ]))
+                archiveArtifacts artifacts: 'deployment.json', fingerprint: true
+                withEnv(awsClientEnv(params, 'TARGET_AWS_ROLE_ARN')) {
+                    sh """
+                      aws s3 cp approval.json s3://${env.ARTIFACT_BUCKET}/${env.ARTIFACT_PREFIX}/prod/approval.json --region ${env.AWS_REGION}
+                      aws s3 cp deployment.json s3://${env.ARTIFACT_BUCKET}/${env.ARTIFACT_PREFIX}/prod/deployment.json --region ${env.AWS_REGION}
+                    """
+                }
+            }
+
+            publishSns(params, 'SUCCESS', "Prod deployment completed for ${params.PROJECT_NAME}. Image: ${env.PROD_IMAGE_URI}")
+        } catch (Exception e) {
+            echo "Prod Devops Pipeline failed: ${e.message}"
+            currentBuild.result = 'FAILURE'
+            publishSns(params, 'FAILED', "Prod deployment failed for ${params.PROJECT_NAME}. Reason: ${e.message}")
+            if (params.NOTIFY_EMAIL) {
+                emailext subject: "[Prod Devops Pipeline][FAILED] ${params.PROJECT_NAME} #${env.BUILD_NUMBER}",
+                         body: """<p>Production deployment failed for <b>${params.PROJECT_NAME}</b>.</p>
+                                  <p>Reason: ${e.message}</p>
+                                  <p>Job: ${env.JOB_NAME} #${env.BUILD_NUMBER}</p>
+                                  <p>Requester: ${params.REQUESTED_BY ?: 'n/a'}</p>""",
+                         to: params.NOTIFY_EMAIL
+            }
+            throw e
+        }
+    }
+}
+
+def awsClientEnv(Map params, String preferredRoleParam = 'CLIENT_AWS_ROLE_ARN') {
+    def roleArn = (params[preferredRoleParam] ?: params.CLIENT_AWS_ROLE_ARN ?: '').toString().trim()
     if (!roleArn) {
         return []
     }
@@ -585,6 +764,100 @@ def publishQualityResults(String tool, String reportDir, Map params) {
         sh """
           aws s3 sync '${reportDir}' 's3://${env.ARTIFACT_BUCKET}/devops-pipeline/${params.PROJECT_NAME}/${imageTag}/test-results/${tool.toLowerCase()}/' --region ${env.AWS_REGION}
         """
+    }
+}
+
+def sonarHostUrl() {
+    return (env.SONAR_HOST_URL ?: 'http://sonarqube.horizon-relevance-dev.svc.cluster.local:9000/sonarqube').trim()
+}
+
+def runSonarAnalysisAndGate(String projectKey) {
+    def hostUrl = sonarHostUrl()
+    withEnv(["SONAR_HOST_URL=${hostUrl}", "SONAR_PROJECT_KEY=${projectKey}"]) {
+        sh '''
+          set +x
+          SCANNER="$(command -v sonar-scanner || true)"
+          if [ -z "$SCANNER" ] && [ -x /opt/sonar-scanner/bin/sonar-scanner ]; then
+            SCANNER=/opt/sonar-scanner/bin/sonar-scanner
+          fi
+          if [ -z "$SCANNER" ] && [ -x /var/jenkins_home/tools/sonar-scanner/bin/sonar-scanner ]; then
+            SCANNER=/var/jenkins_home/tools/sonar-scanner/bin/sonar-scanner
+          fi
+          if [ -z "$SCANNER" ]; then
+            echo "sonar-scanner CLI is not available in the Jenkins agent image."
+            exit 1
+          fi
+
+          TOKEN_ARG=""
+          if [ -n "${SONAR_TOKEN:-}" ]; then
+            TOKEN_ARG="-Dsonar.token=${SONAR_TOKEN}"
+          fi
+
+          "$SCANNER" \
+            -Dproject.settings=sonar-project.properties \
+            -Dsonar.host.url="$SONAR_HOST_URL" \
+            $TOKEN_ARG
+        '''
+
+        timeout(time: 10, unit: 'MINUTES') {
+            sh '''
+              set +x
+              if [ ! -f .scannerwork/report-task.txt ]; then
+                echo "Sonar scanner report-task.txt was not created."
+                exit 1
+              fi
+
+              CE_TASK_ID="$(awk -F= '/^ceTaskId=/{print $2}' .scannerwork/report-task.txt)"
+              if [ -z "$CE_TASK_ID" ]; then
+                echo "Sonar Compute Engine task id is missing."
+                exit 1
+              fi
+
+              AUTH_ARGS=""
+              if [ -n "${SONAR_TOKEN:-}" ]; then
+                AUTH_ARGS="-u ${SONAR_TOKEN}:"
+              fi
+
+              for i in $(seq 1 60); do
+                curl -fsS $AUTH_ARGS "$SONAR_HOST_URL/api/ce/task?id=$CE_TASK_ID" -o sonar-ce-task.json
+                STATUS="$(python3 - <<'PY'
+import json
+print(json.load(open('sonar-ce-task.json')).get('task', {}).get('status', ''))
+PY
+)"
+                if [ "$STATUS" = "SUCCESS" ]; then
+                  python3 - <<'PY' > sonar-analysis-id.txt
+import json
+print(json.load(open('sonar-ce-task.json')).get('task', {}).get('analysisId', ''))
+PY
+                  break
+                fi
+                if [ "$STATUS" = "FAILED" ] || [ "$STATUS" = "CANCELED" ]; then
+                  echo "Sonar Compute Engine task ended with status: $STATUS"
+                  exit 1
+                fi
+                sleep 10
+              done
+
+              ANALYSIS_ID="$(cat sonar-analysis-id.txt 2>/dev/null || true)"
+              if [ -z "$ANALYSIS_ID" ]; then
+                echo "Timed out waiting for Sonar analysis completion."
+                exit 1
+              fi
+
+              curl -fsS $AUTH_ARGS "$SONAR_HOST_URL/api/qualitygates/project_status?analysisId=$ANALYSIS_ID" -o sonar-quality-gate.json
+              QG_STATUS="$(python3 - <<'PY'
+import json
+print(json.load(open('sonar-quality-gate.json')).get('projectStatus', {}).get('status', 'UNKNOWN'))
+PY
+)"
+              echo "Sonar quality gate status: $QG_STATUS"
+              if [ "$QG_STATUS" = "ERROR" ]; then
+                echo "Sonar quality gate failed."
+                exit 1
+              fi
+            '''
+        }
     }
 }
 

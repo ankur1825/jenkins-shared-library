@@ -3,17 +3,27 @@ replicaCount: 1
 
 image:
   repository: ankur1825/horizon-jenkins
-  tag: "1.0.6"
+  tag: "1.0.7"
   pullPolicy: IfNotPresent
 
 imagePullSecrets: []
 nameOverride: ""
 fullnameOverride: ""
 
+# serviceAccount:
+#   create: false
+#   automount: false
+#   name: ""
 serviceAccount:
-  create: false
-  automount: false
-  name: ""
+  create: true          # let Helm create the SA
+  name: jenkins         # or leave empty to use the chart fullname
+  automount: true       # needed so kubectl/helm can auth
+  annotations: {}
+
+rbac:
+  create: true
+  # You can append extra rules if your jobs need them
+  additionalRules: []   # e.g. [{apiGroups:[""], resources:["persistentvolumeclaims"], verbs:["*"]}]
 
 podAnnotations: {}
 podLabels: {}
@@ -31,17 +41,87 @@ securityContext:
 initContainers:
   - name: volume-permission-fix
     image: busybox
-    command: ["sh", "-c", "chmod -R 777 /var/jenkins_home"]
-    securityContext:
-      runAsUser: 0
-      runAsGroup: 0
+    command: ["sh","-c","chmod -R 777 /var/jenkins_home"]
     volumeMounts:
       - name: jenkins-home
         mountPath: /var/jenkins_home
 
+  - name: remove-ldap-init-groovy
+    image: busybox
+    command: ["sh","-lc","rm -f /var/jenkins_home/init.groovy.d/*.groovy || true"]
+    volumeMounts:
+      - name: jenkins-home
+        mountPath: /var/jenkins_home
+
+  - name: install-sonar-scanner
+    image: alpine:3.20
+    command:
+      - sh
+      - -lc
+      - |
+        set -e
+        apk add --no-cache curl unzip
+        mkdir -p /var/jenkins_home/tools
+        cd /var/jenkins_home/tools
+        if [ ! -x sonar-scanner/bin/sonar-scanner ]; then
+          curl -fsSLo sonar-scanner.zip https://binaries.sonarsource.com/Distribution/sonar-scanner-cli/sonar-scanner-cli-5.0.1.3006-linux.zip
+          unzip -oq sonar-scanner.zip
+          rm -rf sonar-scanner
+          mv sonar-scanner-5.0.1.3006-linux sonar-scanner
+          rm -f sonar-scanner.zip
+        fi
+        chmod +x sonar-scanner/bin/sonar-scanner
+    volumeMounts:
+      - name: jenkins-home
+        mountPath: /var/jenkins_home
+
+
+# initContainers:
+#   - name: volume-permission-fix
+#     image: busybox
+#     command: ["sh", "-c", "chmod -R 777 /var/jenkins_home"]
+#     securityContext:
+#       runAsUser: 0
+#       runAsGroup: 0
+#     volumeMounts:
+#       - name: jenkins-home
+#         mountPath: /var/jenkins_home
+
+  # - name: copy-init-groovy
+  #   image: busybox
+  #   command:
+  #     - sh
+  #     - -c
+  #     - |
+  #       mkdir -p /var/jenkins_home/init.groovy.d
+  #       cp -v /opt/bootstrap/ldap-init.d/*.groovy /var/jenkins_home/init.groovy.d/ || true
+  #   securityContext: { runAsUser: 0, runAsGroup: 0 }
+  #   volumeMounts:
+  #     - { name: jenkins-home, mountPath: /var/jenkins_home }
+  #     - { name: ldap-init-volume, mountPath: /opt/bootstrap/ldap-init.d, readOnly: true }      
+
 service:
   type: ClusterIP
   port: 8080
+
+# ingress:
+#   enabled: true
+#   className: nginx
+#   annotations:
+#     nginx.ingress.kubernetes.io/use-forwarded-headers: "true"
+#     nginx.ingress.kubernetes.io/proxy-set-headers: "horizon-relevance-dev/jenkins-proxy-headers"
+#     nginx.ingress.kubernetes.io/proxy-cookie-path: "/ /jenkins"
+#     nginx.ingress.kubernetes.io/proxy-buffer-size: "16k"
+#     nginx.ingress.kubernetes.io/proxy-buffers: "8 16k"
+#   hosts:
+#     - host: horizonrelevance.com
+#       paths:
+#         - path: /jenkins
+#           pathType: Prefix  
+#   tls:
+#     - hosts:
+#       - horizonrelevance.com
+#       secretName: jenkins-tls         
 
 ingress:
   enabled: true
@@ -49,11 +129,16 @@ ingress:
   annotations:
     nginx.ingress.kubernetes.io/rewrite-target: /jenkins/$2
     nginx.ingress.kubernetes.io/use-regex: "true"
+    nginx.ingress.kubernetes.io/backend-protocol: "HTTP" 
   hosts:
     - host: horizonrelevance.com
       paths:
         - path: /jenkins(/|$)(.*)
           pathType: ImplementationSpecific
+  tls:
+    - hosts:
+      - horizonrelevance.com
+      secretName: jenkins-tls         
 
 resources:
   requests:
@@ -102,11 +187,13 @@ volumes:
   - name: jcasc-config-volume
     configMap:
       name: jenkins-jcasc-config
-  - name: ldap-init-volume
-    configMap:
-      name: ldap-init-script   
+  # - name: ldap-init-volume
+  #   configMap:
+  #     name: ldap-init-script   
   - name: docker-graph-storage
     emptyDir: {}
+  - name: disable-ref-init          
+    emptyDir: {}   
 
 volumeMounts:
   - name: jenkins-home
@@ -114,9 +201,13 @@ volumeMounts:
   - name: jcasc-config-volume
     mountPath: /var/jenkins_home/casc_configs
     readOnly: true
-  - name: ldap-init-volume
-    mountPath: /var/jenkins_home/init.groovy.d
+  - name: disable-ref-init          
+    mountPath: /usr/share/jenkins/ref/init.groovy.d
     readOnly: true  
+  # - name: ldap-init-volume
+  #   mountPath: /opt/bootstrap/ldap-init.d
+  #   #mountPath: /var/jenkins_home/init.groovy.d
+  #   readOnly: true  
 
 extraContainers:
   - name: dind
@@ -137,8 +228,9 @@ controller:
   jenkinsUriPrefix: /jenkins
   jenkinsUrlProtocol: https
   jenkinsUrl: https://horizonrelevance.com/jenkins
-  javaOpts: >
-    -Djenkins.model.Jenkins.instance.setRootUrl=https://horizonrelevance.com/jenkins
+  javaOpts: ""
+  #javaOpts: >
+  #  -Djenkins.model.Jenkins.instance.setRootUrl=https://horizonrelevance.com/jenkins
 
   containerEnv:
     - name: LDAP_MANAGER_PASSWORD
@@ -146,13 +238,22 @@ controller:
         secretKeyRef:
           name: jenkins-ldap
           key: password
+    - name: SONAR_HOST_URL
+      value: http://sonarqube.horizon-relevance-dev.svc.cluster.local:9000/sonarqube
+    - name: SONAR_TOKEN
+      valueFrom:
+        secretKeyRef:
+          name: sonarqube-jenkins-token
+          key: token
+          optional: true
     - name: CASC_JENKINS_CONFIG
-      value: /var/jenkins_home/casc_configs/ldap-auth.yaml
+      value: /var/jenkins_home/casc_configs
+      #value: /var/jenkins_home/casc_configs/ldap-auth.yaml
     - name: DOCKER_HOST
       value: "tcp://localhost:2375"
 
 persistence:
   enabled: true
-  storageClass: gp2
+  storageClass: gp3
   accessMode: ReadWriteOnce
   size: 10Gi
