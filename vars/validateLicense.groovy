@@ -57,6 +57,29 @@ def requestedFeatures(Map params) {
         return prodFeatures.unique()
     }
 
+    if (str(params.PIPELINE_KIND).equalsIgnoreCase('TEST_DEVOPS')) {
+        def testFeatures = []
+        if (asBool(params.ENABLE_SONARQUBE)) {
+            testFeatures << 'code_scan'
+        }
+        if (asBool(params.ENABLE_TRIVY)) {
+            testFeatures << 'image_scan'
+        }
+        if (asBool(params.ENABLE_OPA)) {
+            testFeatures << 'policy_scan'
+        }
+        if (asBool(params.ENABLE_CHECKMARX)) {
+            testFeatures << 'static_application_security'
+        }
+        if (asBool(params.ENABLE_SOAPUI) || asBool(params.ENABLE_JMETER) || asBool(params.ENABLE_SELENIUM) || asBool(params.ENABLE_NEWMAN) || asBool(params.ENABLE_RESTASSURED) || asBool(params.ENABLE_UFT)) {
+            testFeatures << 'test_suites'
+        }
+        if (asBool(params.ENABLE_NOTIFICATIONS)) {
+            testFeatures << 'notifications'
+        }
+        return testFeatures.unique()
+    }
+
     def features = ['build', 'artifact_publish']
     if (asBool(params.ENABLE_SONARQUBE)) {
         features << 'code_scan'
@@ -67,7 +90,7 @@ def requestedFeatures(Map params) {
     if (asBool(params.ENABLE_CHECKMARX)) {
         features << 'static_application_security'
     }
-    if (asBool(params.ENABLE_SOAPUI) || asBool(params.ENABLE_JMETER) || asBool(params.ENABLE_SELENIUM) || asBool(params.ENABLE_NEWMAN)) {
+    if (asBool(params.ENABLE_SOAPUI) || asBool(params.ENABLE_JMETER) || asBool(params.ENABLE_SELENIUM) || asBool(params.ENABLE_NEWMAN) || asBool(params.ENABLE_RESTASSURED) || asBool(params.ENABLE_UFT)) {
         features << 'test_suites'
     }
     if (str(params.TARGET_ENV).toUpperCase().contains('PROD')) {

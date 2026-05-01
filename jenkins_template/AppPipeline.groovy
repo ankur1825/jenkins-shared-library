@@ -186,52 +186,14 @@ def runDevops(Map params) {
                 }
             }
 
-            stage('Security Preflight') {
-                runSecurityPreflight(params)
-            }
-
             // -------- Compile & Package (generic) --------
             stage("Compile & Package (${params.PROJECT_TYPE})") {
                 compileAndPackage(params.PROJECT_TYPE)
             }
 
-            // -------- QUALITY GATES --------
-            if (params.ENABLE_SONARQUBE?.toBoolean()) {
-                stage('Code Quality Analysis') {
-                    def scannerHome = tool 'SONAR-SCANNER'
-                    if (!fileExists('sonar-project.properties')) {
-                        error "sonar-project.properties not found!"
-                    }
-                    def propsText = readFile 'sonar-project.properties'
-                    def sonarProjectKey = propsText.readLines()
-                        .find { it.trim().startsWith('sonar.projectKey=') }
-                        ?.split('=', 2)?.getAt(1)?.trim()
-                    if (!sonarProjectKey) {
-                        error "sonar.projectKey is missing or empty!"
-                    }
-                    echo "Code analysis project key: ${sonarProjectKey}"
+            // Security, quality, and test gates are intentionally handled by Test Devops Pipeline.
 
-                    withSonarQubeEnv('sonarqube') {
-                        withCredentials([string(credentialsId: 'sonarqube-token', variable: 'SONAR_TOKEN')]) {
-                            sh """
-                                ${scannerHome}/bin/sonar-scanner \
-                                -Dproject.settings=sonar-project.properties \
-                                -Dsonar.host.url=https://horizonrelevance.com/sonarqube
-                            """
-                        }
-                    }
-                    timeout(time: 10, unit: 'MINUTES') { waitForQualityGate abortPipeline: false }
-                    postProcessSonar(sonarProjectKey, params.REPO_URL, params.REQUESTED_BY ?: 'unknown')
-                }
-            }
-
-            runSelectedQualityTool('Checkmarx', params.ENABLE_CHECKMARX, params)
-            runSelectedQualityTool('SoapUI', params.ENABLE_SOAPUI, params)
-            runSelectedQualityTool('JMeter', params.ENABLE_JMETER, params)
-            runSelectedQualityTool('Selenium', params.ENABLE_SELENIUM, params)
-            runSelectedQualityTool('Newman', params.ENABLE_NEWMAN, params)
-
-            // -------- Build & Scan --------
+            // -------- Build --------
             stage('Build Docker Image') {
                 sh """
                   docker build \
@@ -241,12 +203,8 @@ def runDevops(Map params) {
                 """
             }
 
-            if (params.ENABLE_TRIVY?.toBoolean()) {
-                stage('Image Security Analysis') {
-                    def imageName = "${env.ECR_URI}:${env.IMAGE_TAG}".toLowerCase()
-                    trivyScan(imageName: imageName, uploadResults: true, application: env.APP_NAME, repoUrl: params.REPO_URL, requestedBy: params.REQUESTED_BY)
-                }
-            }
+            // Image scanning is intentionally handled by Test Devops Pipeline.
+
 
             // -------- Publish --------
             stage('Push Image to ECR') {
@@ -319,6 +277,111 @@ def runDevops(Map params) {
             if (params.NOTIFY_EMAIL) {
                 emailext subject: "[Devops Pipeline][FAILED] ${params.PROJECT_NAME} #${env.BUILD_NUMBER}",
                          body: """<p>Build failed for <b>${params.PROJECT_NAME}</b>.</p>
+                                  <p>Reason: ${e.message}</p>
+                                  <p>Job: ${env.JOB_NAME} #${env.BUILD_NUMBER}</p>
+                                  <p>Requester: ${params.REQUESTED_BY ?: 'n/a'}</p>""",
+                         to: params.NOTIFY_EMAIL
+            }
+            throw e
+        }
+    }
+}
+
+// ================== TEST DEVOPS PIPELINE ==================
+def runTestDevops(Map params) {
+    /*
+      Test Devops Pipeline owns security, quality, and functional test gates.
+      It does not build or deploy application images; it checks out the client
+      repository, runs the selected scanners/test suites, archives results, and
+      publishes results to the client artifact bucket when configured.
+    */
+    node {
+        try {
+            stage('Validate License') {
+                validateLicense(params + [PIPELINE_NAME: 'Test Devops Pipeline', PIPELINE_KIND: 'TEST_DEVOPS'])
+            }
+
+            stage('Checkout Application Repo') {
+                if (!params.REPO_URL || !params.REPO_URL.toString().contains('/')) {
+                    error "REPO_URL is invalid ('${params.REPO_URL}'). Provide a full Git URL."
+                }
+                echo "Cloning repository: ${params.REPO_URL} (branch ${params.BRANCH ?: 'main'})"
+                git credentialsId: (params.CREDENTIALS_ID ?: 'github-token'), url: params.REPO_URL, branch: (params.BRANCH ?: 'main')
+                sh 'pwd && ls -lrth'
+            }
+
+            stage('Prepare Test Context') {
+                script {
+                    env.AWS_REGION = (params.AWS_REGION ?: 'us-east-1').toString().trim()
+                    env.ARTIFACT_BUCKET = (params.ARTIFACT_BUCKET ?: '').toString().trim()
+                    env.APP_NAME = (params.PROJECT_NAME ?: env.JOB_NAME ?: 'application').toString().trim()
+                    env.IMAGE_TAG = (params.BUILD_TAG_OVERRIDE ?: env.BUILD_NUMBER ?: 'manual').toString().trim()
+                    env.TEST_RESULTS_PREFIX = "test-devops-pipeline/${env.APP_NAME}/${env.BUILD_NUMBER ?: env.IMAGE_TAG}"
+                }
+            }
+
+            if (params.ENABLE_SONARQUBE?.toBoolean()) {
+                stage('Code Quality Analysis') {
+                    runSonarQubeAnalysis(params)
+                }
+            }
+
+            if (params.ENABLE_TRIVY?.toBoolean() || params.ENABLE_OPA?.toBoolean()) {
+                stage('Security Preflight') {
+                    runSecurityPreflight(params)
+                }
+            }
+
+            if (params.ENABLE_TRIVY?.toBoolean() && params.IMAGE_URI) {
+                stage('Image Security Analysis') {
+                    trivyScan(
+                        imageName: params.IMAGE_URI.toString().trim(),
+                        uploadResults: true,
+                        application: env.APP_NAME,
+                        repoUrl: params.REPO_URL,
+                        requestedBy: params.REQUESTED_BY
+                    )
+                }
+            }
+
+            runSelectedQualityTool('Checkmarx', params.ENABLE_CHECKMARX, params)
+            runSelectedQualityTool('SoapUI', params.ENABLE_SOAPUI, params)
+            runSelectedQualityTool('JMeter', params.ENABLE_JMETER, params)
+            runSelectedQualityTool('Selenium', params.ENABLE_SELENIUM, params)
+            runSelectedQualityTool('Newman', params.ENABLE_NEWMAN, params)
+            runSelectedQualityTool('RestAssured', params.ENABLE_RESTASSURED, params)
+            runSelectedQualityTool('UFT', params.ENABLE_UFT, params)
+
+            stage('Publish Test Summary') {
+                writeFile file: 'test-summary.json', text: groovy.json.JsonOutput.prettyPrint(groovy.json.JsonOutput.toJson([
+                    application: env.APP_NAME,
+                    projectType: params.PROJECT_TYPE ?: '',
+                    repoUrl: params.REPO_URL ?: '',
+                    branch: params.BRANCH ?: 'main',
+                    requestedBy: params.REQUESTED_BY ?: 'unknown',
+                    buildUrl: env.BUILD_URL,
+                    resultPrefix: env.TEST_RESULTS_PREFIX,
+                    completedAt: new Date().format("yyyy-MM-dd'T'HH:mm:ssXXX", TimeZone.getTimeZone('UTC'))
+                ]))
+                archiveArtifacts artifacts: 'test-summary.json,reports/**,security-preflight/**', allowEmptyArchive: true, fingerprint: true
+
+                if (env.ARTIFACT_BUCKET) {
+                    withEnv(awsClientEnv(params)) {
+                        sh """
+                          aws s3 cp test-summary.json s3://${env.ARTIFACT_BUCKET}/${env.TEST_RESULTS_PREFIX}/test-summary.json --region ${env.AWS_REGION}
+                        """
+                    }
+                }
+            }
+
+            publishSns(params, 'SUCCESS', "Test Devops pipeline completed for ${env.APP_NAME}. Results prefix: ${env.TEST_RESULTS_PREFIX}")
+        } catch (Exception e) {
+            echo "Test Devops Pipeline failed: ${e.message}"
+            currentBuild.result = 'FAILURE'
+            publishSns(params, 'FAILED', "Test Devops pipeline failed for ${params.PROJECT_NAME}. Reason: ${e.message}")
+            if (params.NOTIFY_EMAIL) {
+                emailext subject: "[Test Devops Pipeline][FAILED] ${params.PROJECT_NAME} #${env.BUILD_NUMBER}",
+                         body: """<p>Test pipeline failed for <b>${params.PROJECT_NAME}</b>.</p>
                                   <p>Reason: ${e.message}</p>
                                   <p>Job: ${env.JOB_NAME} #${env.BUILD_NUMBER}</p>
                                   <p>Requester: ${params.REQUESTED_BY ?: 'n/a'}</p>""",
@@ -583,6 +646,33 @@ def publishSns(Map params, String status, String message) {
     }
 }
 
+def runSonarQubeAnalysis(Map params) {
+    def scannerHome = tool 'SONAR-SCANNER'
+    if (!fileExists('sonar-project.properties')) {
+        error "sonar-project.properties not found!"
+    }
+    def propsText = readFile 'sonar-project.properties'
+    def sonarProjectKey = propsText.readLines()
+        .find { it.trim().startsWith('sonar.projectKey=') }
+        ?.split('=', 2)?.getAt(1)?.trim()
+    if (!sonarProjectKey) {
+        error "sonar.projectKey is missing or empty!"
+    }
+    echo "Code analysis project key: ${sonarProjectKey}"
+
+    withSonarQubeEnv('sonarqube') {
+        withCredentials([string(credentialsId: 'sonarqube-token', variable: 'SONAR_TOKEN')]) {
+            sh """
+                ${scannerHome}/bin/sonar-scanner \
+                -Dproject.settings=sonar-project.properties \
+                -Dsonar.host.url=https://horizonrelevance.com/sonarqube
+            """
+        }
+    }
+    timeout(time: 10, unit: 'MINUTES') { waitForQualityGate abortPipeline: false }
+    postProcessSonar(sonarProjectKey, params.REPO_URL, params.REQUESTED_BY ?: 'unknown')
+}
+
 def runSecurityPreflight(Map params = [:]) {
     def failOnSeverity = (params.SECURITY_FAIL_ON_SEVERITY ?: env.SECURITY_FAIL_ON_SEVERITY ?: 'CRITICAL,HIGH').toString()
 
@@ -686,6 +776,12 @@ def runSelectedQualityTool(String tool, Object enabled, Map params) {
                 case 'Newman':
                     runNewman(reportDir)
                     break
+                case 'RestAssured':
+                    runRestAssured(reportDir)
+                    break
+                case 'UFT':
+                    runUft(reportDir)
+                    break
                 default:
                     error "Unsupported quality tool: ${tool}"
             }
@@ -714,6 +810,10 @@ def qualityToolDisplayName(String tool) {
             return 'Browser Workflow Testing'
         case 'Newman':
             return 'API Regression Testing'
+        case 'RestAssured':
+            return 'API Contract Testing'
+        case 'UFT':
+            return 'Enterprise Functional Testing'
         default:
             return 'Quality Gate'
     }
@@ -777,6 +877,31 @@ def runNewman(String reportDir) {
     sh "newman run tests/postman/collection.json --reporters cli,junit,json --reporter-junit-export '${reportDir}/results.xml' --reporter-json-export '${reportDir}/results.json'"
 }
 
+def runRestAssured(String reportDir) {
+    def ran = false
+    if (fileExists('pom.xml')) {
+        sh "mvn -B -Dtest=*RestAssured*,*ApiTest* -Dsurefire.reportsDirectory='${reportDir}' test"
+        ran = true
+    } else if (fileExists('gradlew') || fileExists('build.gradle')) {
+        sh "./gradlew test --tests '*RestAssured*' --tests '*ApiTest*' || gradle test --tests '*RestAssured*' --tests '*ApiTest*'"
+        sh "mkdir -p '${reportDir}' && cp -R build/test-results/test/* '${reportDir}/' 2>/dev/null || true"
+        ran = true
+    }
+    if (!ran) {
+        error "No RestAssured test command found. Expected Maven/Gradle tests named *RestAssured* or *ApiTest*."
+    }
+}
+
+def runUft(String reportDir) {
+    if (fileExists('tests/uft/run-uft.sh')) {
+        sh "chmod +x tests/uft/run-uft.sh && tests/uft/run-uft.sh '${reportDir}'"
+    } else if (fileExists('tests/uft')) {
+        sh "echo 'UFT assets found under tests/uft, but no run-uft.sh launcher exists.' | tee '${reportDir}/uft.txt'; exit 1"
+    } else {
+        error "UFT test assets not found. Expected tests/uft/run-uft.sh."
+    }
+}
+
 def publishQualityResults(String tool, String reportDir, Map params) {
     archiveArtifacts artifacts: "${reportDir}/**", allowEmptyArchive: true, fingerprint: true
 
@@ -785,10 +910,11 @@ def publishQualityResults(String tool, String reportDir, Map params) {
         return
     }
 
+    def pipelinePrefix = params.PIPELINE_KIND?.toString()?.equalsIgnoreCase('TEST_DEVOPS') ? 'test-devops-pipeline' : 'devops-pipeline'
     def imageTag = env.IMAGE_TAG ?: (env.BUILD_NUMBER ?: 'manual')
     withEnv(awsClientEnv(params)) {
         sh """
-          aws s3 sync '${reportDir}' 's3://${env.ARTIFACT_BUCKET}/devops-pipeline/${params.PROJECT_NAME}/${imageTag}/test-results/${tool.toLowerCase()}/' --region ${env.AWS_REGION}
+          aws s3 sync '${reportDir}' 's3://${env.ARTIFACT_BUCKET}/${pipelinePrefix}/${params.PROJECT_NAME}/${imageTag}/test-results/${tool.toLowerCase()}/' --region ${env.AWS_REGION}
         """
     }
 }

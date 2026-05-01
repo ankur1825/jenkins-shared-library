@@ -20,6 +20,8 @@ def call(Map params = [:]) {
                        serviceName.toLowerCase().contains('devops pipeline')
     def isProdDevops = pipelineKind.equalsIgnoreCase('PROD_DEVOPS') ||
                        serviceName.toLowerCase().contains('prod devops pipeline')
+    def isTestDevops = pipelineKind.equalsIgnoreCase('TEST_DEVOPS') ||
+                       serviceName.toLowerCase().contains('test devops pipeline')
 
     if (!isProdDevops && !repoUrl) {
         error "Repository URL is missing. Please provide a valid URL."
@@ -38,6 +40,7 @@ def call(Map params = [:]) {
                     echo "${k} = ${sensitive ? '****' : v}"
                 }
                 echo "Router says isProdDevops = ${isProdDevops}"
+                echo "Router says isTestDevops = ${isTestDevops}"
                 echo "Router says isDevops = ${isDevops}"
                 echo "============================="
             }
@@ -56,6 +59,8 @@ def call(Map params = [:]) {
 
             if (isProdDevops) {
                 pipelineScript.runProdDevops(params)
+            } else if (isTestDevops) {
+                pipelineScript.runTestDevops(params)
             } else if (isDevops) {
                 pipelineScript.runDevops(params)
             } else {
