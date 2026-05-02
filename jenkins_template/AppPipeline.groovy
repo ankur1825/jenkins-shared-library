@@ -745,7 +745,7 @@ def runSelectedQualityTool(String tool, Object enabled, Map params) {
                     runJMeter(reportDir)
                     break
                 case 'Selenium':
-                    runSelenium(reportDir)
+                    runSelenium(reportDir, params)
                     break
                 case 'Newman':
                     runNewman(reportDir)
@@ -824,18 +824,30 @@ def runJMeter(String reportDir) {
     """
 }
 
-def runSelenium(String reportDir) {
+def runSelenium(String reportDir, Map params = [:]) {
     def ran = false
+    def targetAppUrl = (params.TARGET_APP_URL ?: params.APPLICATION_URL ?: params.APP_URL ?: env.TARGET_APP_URL ?: '').toString().trim()
+    if (!targetAppUrl && params.TARGET_ENV) {
+        echo "TARGET_APP_URL was not provided. Selenium tests will use the test suite default URL if configured."
+    }
     if (fileExists('pom.xml')) {
-        sh "mvn -B -Dtest=*UITest* -Dsurefire.reportsDirectory='${reportDir}' test"
+        withEnv(["TARGET_APP_URL=${targetAppUrl}", "SELENIUM_REPORT_DIR=${reportDir}"]) {
+            sh "mvn -B -Dtest=*UITest* -Dsurefire.reportsDirectory='${reportDir}' test"
+        }
         ran = true
     } else if (fileExists('package.json')) {
         def hasScript = sh(returnStatus:true, script: "node -e \"try{let p=require('./package.json');process.exit(p.scripts&&p.scripts['test:e2e']?0:1)}catch(e){process.exit(1)}\"") == 0
         if (hasScript) {
-            sh """
-              if [ -f package-lock.json ]; then npm ci; else npm install; fi
-              npm run test:e2e -- --outputPath='${reportDir}' || npm run test:e2e
-            """
+            withEnv(["TARGET_APP_URL=${targetAppUrl}", "SELENIUM_REPORT_DIR=${reportDir}", "CI=true"]) {
+                sh """
+                  set -e
+                  if [ -f package-lock.json ]; then npm ci; else npm install; fi
+                  if node -e "let p=require('./package.json');process.exit(p.devDependencies&&p.devDependencies['@playwright/test']?0:1)" >/dev/null 2>&1; then
+                    npx playwright install chromium
+                  fi
+                  npm run test:e2e
+                """
+            }
             ran = true
         }
     }
