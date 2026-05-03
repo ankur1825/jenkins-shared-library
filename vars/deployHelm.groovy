@@ -9,7 +9,7 @@ def call(Map params = [:]) {
         userConfig = readJSON file: configPath
     } else {
         echo "config.json not found; generating deployment config from pipeline metadata."
-        def imageUri = (env.IMAGE_URI ?: params.IMAGE_URI ?: '').toString().trim()
+        def imageUri = (env.IMAGE_URI ?: params.IMAGE_URI ?: env.ECR_URI ?: '').toString().trim()
         def imageRepo = imageUri
         def imageTag = (env.TAG ?: params.TARGET_IMAGE_TAG ?: 'latest').toString().split(',')[0].trim()
         if (imageUri.contains('@sha256:')) {
