@@ -47,7 +47,7 @@ def call(Map params = [:]) {
         ]
     }
 
-    userConfig.appName      = userConfig.AppName ?: userConfig.appName ?: params.PROJECT_NAME ?: 'default-app'
+    userConfig.appName      = safeName(userConfig.AppName ?: userConfig.appName ?: params.PROJECT_NAME ?: 'default-app')
     def deployTarget        = resolveDeployTarget(params, userConfig)
     userConfig.namespace    = deployTarget.namespace
     userConfig.replicaCount = userConfig.replicaCount ?: 1
@@ -140,7 +140,7 @@ def call(Map params = [:]) {
         echo "Policy validation is disabled by configuration. Skipping."
     }
 
-    def releaseName = userConfig.appName.toLowerCase().replaceAll(/[^a-z0-9\-]/, '-')
+    def releaseName = safeName(userConfig.appName)
     def ns = deployTarget.namespace
 
     withEnv(assumeRoleEnv(deployTarget.roleArn, deployTarget.region)) {
