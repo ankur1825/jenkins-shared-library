@@ -842,14 +842,39 @@ def runSelenium(String reportDir, Map params = [:]) {
             def hasScript = sh(returnStatus:true, script: "node -e \"try{let p=require('./package.json');process.exit(p.scripts&&p.scripts['test:e2e']?0:1)}catch(e){process.exit(1)}\"") == 0
             if (hasScript) {
                 withEnv(["TARGET_APP_URL=${targetAppUrl}", "SELENIUM_REPORT_DIR=${reportDir}", "CI=true"]) {
-                    sh """
+                    sh '''
                       set -e
+                      if command -v docker >/dev/null 2>&1 && docker info >/dev/null 2>&1; then
+                        echo "Running Selenium tests inside Playwright browser container"
+                        rm -rf node_modules
+                        cid=$(docker create --network host -w /work \
+                          -e TARGET_APP_URL="$TARGET_APP_URL" \
+                          -e SELENIUM_REPORT_DIR="$SELENIUM_REPORT_DIR" \
+                          -e CI=true \
+                          mcr.microsoft.com/playwright:v1.44.1-jammy sh -lc '
+                            set -e
+                            cd /work
+                            if [ -f package-lock.json ]; then npm ci; else npm install; fi
+                            npm run test:e2e
+                          ')
+                        cleanup() { docker rm -f "$cid" >/dev/null 2>&1 || true; }
+                        trap cleanup EXIT
+                        docker cp . "$cid":/work
+                        set +e
+                        docker start -a "$cid"
+                        status=$?
+                        set -e
+                        mkdir -p "$SELENIUM_REPORT_DIR"
+                        docker cp "$cid":/work/"$SELENIUM_REPORT_DIR"/. "$SELENIUM_REPORT_DIR"/ 2>/dev/null || true
+                        exit "$status"
+                      fi
+
                       if [ -f package-lock.json ]; then npm ci; else npm install; fi
                       if node -e "let p=require('./package.json');process.exit(p.devDependencies&&p.devDependencies['@playwright/test']?0:1)" >/dev/null 2>&1; then
                         npx playwright install chromium
                       fi
                       npm run test:e2e
-                    """
+                    '''
                 }
                 ran = true
             }
