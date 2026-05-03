@@ -667,9 +667,9 @@ def runSecurityPreflight(Map params = [:]) {
         --exclude='*.jpg' \\
         --exclude='*.jpeg' \\
         > security-preflight/secrets.txt
-      secret_status=\\$?
+      secret_status=\$?
       set -e
-      if [ "\\$secret_status" -eq 0 ]; then
+      if [ "\$secret_status" -eq 0 ]; then
         echo "Potential secrets detected in source. See security-preflight/secrets.txt"
         exit 1
       fi
@@ -707,10 +707,10 @@ def runSecurityPreflight(Map params = [:]) {
         sh """
           if command -v conftest >/dev/null 2>&1; then
             manifest_dirs=""
-            [ -d k8s ] && manifest_dirs="\\$manifest_dirs k8s"
-            [ -d kubernetes ] && manifest_dirs="\\$manifest_dirs kubernetes"
-            [ -d manifests ] && manifest_dirs="\\$manifest_dirs manifests"
-            conftest test \\$manifest_dirs -p security-preflight/opa-policies --output json \\
+            [ -d k8s ] && manifest_dirs="\$manifest_dirs k8s"
+            [ -d kubernetes ] && manifest_dirs="\$manifest_dirs kubernetes"
+            [ -d manifests ] && manifest_dirs="\$manifest_dirs manifests"
+            conftest test \$manifest_dirs -p security-preflight/opa-policies --output json \\
               > security-preflight/kubernetes-policy.json
           else
             echo "conftest CLI not installed; skipping Kubernetes manifest policy validation." \\
