@@ -836,24 +836,59 @@ def runSelenium(String reportDir, Map params = [:]) {
         }
         ran = true
     } else if (fileExists('package.json')) {
-        def hasScript = sh(returnStatus:true, script: "node -e \"try{let p=require('./package.json');process.exit(p.scripts&&p.scripts['test:e2e']?0:1)}catch(e){process.exit(1)}\"") == 0
-        if (hasScript) {
-            withEnv(["TARGET_APP_URL=${targetAppUrl}", "SELENIUM_REPORT_DIR=${reportDir}", "CI=true"]) {
-                sh """
-                  set -e
-                  if [ -f package-lock.json ]; then npm ci; else npm install; fi
-                  if node -e "let p=require('./package.json');process.exit(p.devDependencies&&p.devDependencies['@playwright/test']?0:1)" >/dev/null 2>&1; then
-                    npx playwright install chromium
-                  fi
-                  npm run test:e2e
-                """
+        def nodeHome = ensureNodeRuntime()
+        def nodePathEnv = nodeHome ? "PATH+NODE=${nodeHome}/bin" : "PATH+NODE="
+        withEnv([nodePathEnv]) {
+            def hasScript = sh(returnStatus:true, script: "node -e \"try{let p=require('./package.json');process.exit(p.scripts&&p.scripts['test:e2e']?0:1)}catch(e){process.exit(1)}\"") == 0
+            if (hasScript) {
+                withEnv(["TARGET_APP_URL=${targetAppUrl}", "SELENIUM_REPORT_DIR=${reportDir}", "CI=true"]) {
+                    sh """
+                      set -e
+                      if [ -f package-lock.json ]; then npm ci; else npm install; fi
+                      if node -e "let p=require('./package.json');process.exit(p.devDependencies&&p.devDependencies['@playwright/test']?0:1)" >/dev/null 2>&1; then
+                        npx playwright install chromium
+                      fi
+                      npm run test:e2e
+                    """
+                }
+                ran = true
             }
-            ran = true
         }
     }
     if (!ran) {
         error "No Selenium UI test command found. Expected Maven UI tests or npm script test:e2e."
     }
+}
+
+def ensureNodeRuntime() {
+    def existingNode = sh(returnStdout: true, script: "command -v node || true").trim()
+    if (existingNode) {
+        echo "Using existing Node.js runtime: ${existingNode}"
+        return ''
+    }
+
+    def nodeVersion = 'v20.11.1'
+    def nodeHome = "${pwd()}/.tools/node/current"
+    sh """
+      set -e
+      mkdir -p .tools/node/current
+      if [ ! -x .tools/node/current/bin/node ]; then
+        arch="\$(uname -m)"
+        case "\$arch" in
+          x86_64|amd64) node_arch="x64" ;;
+          aarch64|arm64) node_arch="arm64" ;;
+          *) echo "Unsupported architecture for Node.js bootstrap: \$arch"; exit 1 ;;
+        esac
+        archive="node-${nodeVersion}-linux-\${node_arch}.tar.gz"
+        url="https://nodejs.org/dist/${nodeVersion}/\${archive}"
+        echo "Downloading Node.js ${nodeVersion} from \$url"
+        curl -fsSL "\$url" -o .tools/node/node.tar.gz
+        tar -xzf .tools/node/node.tar.gz -C .tools/node/current --strip-components=1
+      fi
+      .tools/node/current/bin/node --version
+      .tools/node/current/bin/npm --version
+    """
+    return nodeHome
 }
 
 def runNewman(String reportDir) {
