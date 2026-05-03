@@ -885,8 +885,9 @@ def ensureNodeRuntime() {
         curl -fsSL "\$url" -o .tools/node/node.tar.gz
         tar -xzf .tools/node/node.tar.gz -C .tools/node/current --strip-components=1
       fi
-      .tools/node/current/bin/node --version
-      .tools/node/current/bin/npm --version
+      export PATH="\$PWD/.tools/node/current/bin:\$PATH"
+      node --version
+      npm --version
     """
     return nodeHome
 }
