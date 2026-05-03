@@ -1025,6 +1025,12 @@ def compileAndPackage(String projectTypeRaw) {
 
         case 'angular':
             sh '''
+              if ! command -v npm >/dev/null 2>&1; then
+                echo "npm is not installed on this Jenkins agent; skipping host Angular build."
+                echo "The Angular Dockerfile will run npm install/build inside the Docker image build."
+                mkdir -p artifact
+                exit 0
+              fi
               if [ -f package-lock.json ]; then npm ci; else npm install; fi
               npm install -g @angular/cli@latest
               npm run prodbuild || ng build --configuration=production
